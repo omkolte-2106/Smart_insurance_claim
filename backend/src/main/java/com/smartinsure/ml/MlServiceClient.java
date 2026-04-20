@@ -60,6 +60,33 @@ public class MlServiceClient {
         }
     }
 
+    public MlDamageSeverityResponse analyzeDamage(java.nio.file.Path imagePath) {
+        if (!properties.getMlService().isEnabled() || !java.nio.file.Files.exists(imagePath)) {
+            return new MlDamageSeverityResponse(0.50, "MODERATE", "placeholder (file missing or service disabled)");
+        }
+        try {
+            org.springframework.util.MultiValueMap<String, Object> body = new org.springframework.util.LinkedMultiValueMap<>();
+            body.add("file", new org.springframework.core.io.FileSystemResource(imagePath));
+
+            RestClient client = RestClient.builder()
+                    .baseUrl(properties.getMlService().getBaseUrl())
+                    .build();
+
+            MlDamageSeverityResponse response = client.post()
+                    .uri("/ml/analyze-damage")
+                    .contentType(MediaType.MULTIPART_FORM_DATA)
+                    .body(body)
+                    .retrieve()
+                    .body(MlDamageSeverityResponse.class);
+            
+            log.info("ML Analysis Response for file {}: {}", imagePath.getFileName(), response);
+            return response;
+        } catch (Exception ex) {
+            log.warn("ML real image analysis failed, falling back: {}", ex.getMessage());
+            return new MlDamageSeverityResponse(0.50, "MODERATE", "fallback (error)");
+        }
+    }
+
     public MlDamagePartsResponse detectPartsDamage(Map<String, Object> payload) {
         if (!properties.getMlService().isEnabled()) {
             return new MlDamagePartsResponse(List.of("BUMPER"), "MEDIUM", "placeholder");

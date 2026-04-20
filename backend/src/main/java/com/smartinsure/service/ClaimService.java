@@ -6,6 +6,7 @@ import com.smartinsure.dto.claim.*;
 import com.smartinsure.entity.*;
 import com.smartinsure.entity.enums.*;
 import com.smartinsure.exception.ApiException;
+import com.smartinsure.config.SmartInsureProperties;
 import com.smartinsure.ml.MlServiceClient;
 import com.smartinsure.ml.dto.*;
 import com.smartinsure.repository.*;
@@ -13,6 +14,7 @@ import com.smartinsure.security.SecurityUser;
 import com.smartinsure.storage.FileStorageService;
 import com.smartinsure.util.ClaimIdGenerator;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
@@ -26,6 +28,7 @@ import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class ClaimService {
 
     public static final String MODULE_DOCUMENT = "document_verification_service";
@@ -44,6 +47,7 @@ public class ClaimService {
     private final InsurancePolicyRepository policyRepository;
     private final ClaimDocumentRepository claimDocumentRepository;
     private final VerificationResultRepository verificationResultRepository;
+    private final SmartInsureProperties properties;
     private final PayoutRepository payoutRepository;
     private final FraudFlagRepository fraudFlagRepository;
     private final ClaimRemarkRepository claimRemarkRepository;
@@ -159,7 +163,20 @@ public class ClaimService {
         Map<String, Object> damagePayload = Map.of("claimPublicId", claim.getClaimPublicId(), "imageCount",
                 claimDocumentRepository.findByClaimId(claim.getId()).stream()
                         .filter(d -> d.getDocumentType() == ClaimDocumentType.VEHICLE_DAMAGE_PHOTO).count());
-        MlDamageSeverityResponse damageResp = mlServiceClient.predictDamage(damagePayload);
+        
+        MlDamageSeverityResponse damageResp;
+        Optional<ClaimDocument> damagePhoto = claimDocumentRepository.findByClaimId(claim.getId()).stream()
+                .filter(d -> d.getDocumentType() == ClaimDocumentType.VEHICLE_DAMAGE_PHOTO)
+                .findFirst();
+
+        if (damagePhoto.isPresent()) {
+            java.nio.file.Path fullPath = java.nio.file.Paths.get(properties.getStorage().getRootPath(), damagePhoto.get().getStoredPath());
+            log.info("Triggering real image scan for claim {} using file {}", claim.getClaimPublicId(), fullPath);
+            damageResp = mlServiceClient.analyzeDamage(fullPath);
+        } else {
+            damageResp = mlServiceClient.predictDamage(damagePayload);
+        }
+        
         persistVerification(claim, MODULE_DAMAGE, damageResp);
         claim.setDamageSeverityScore(damageResp.severityScore());
 
