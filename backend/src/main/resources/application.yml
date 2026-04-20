@@ -1,0 +1,48 @@
+spring:
+  profiles:
+    active: dev
+  application:
+    name: smartinsure-backend
+  servlet:
+    multipart:
+      max-file-size: 15MB
+      max-request-size: 30MB
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+        jdbc:
+          time_zone: UTC
+  datasource:
+    url: jdbc:postgresql://localhost:5432/vehicleinsure
+    username: postgres
+    password: 2106
+    driver-class-name: org.postgresql.Driver
+
+server:
+  port: 8080
+  error:
+    include-message: always
+
+smartinsure:
+  jwt:
+    secret: "ChangeThisToAVeryLongSecretKeyForProductionUseAtLeast256Bits!!"
+    expiration-ms: 86400000
+  ml-service:
+    base-url: http://localhost:8090
+    enabled: true
+  storage:
+    root-path: ${user.home}/smartinsure-uploads
+
+springdoc:
+  api-docs:
+    path: /api/v3/api-docs
+  swagger-ui:
+    path: /api/swagger-ui.html
+
+logging:
+  level:
+    com.smartinsure: INFO

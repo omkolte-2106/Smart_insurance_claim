@@ -1,0 +1,44 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    @apply scroll-smooth antialiased;
+  }
+  body {
+    @apply bg-canvas text-ink-900 font-sans text-[15px] leading-relaxed;
+  }
+  h1,
+  h2,
+  h3 {
+    @apply font-display tracking-tight text-ink-950;
+  }
+}
+
+@layer components {
+  .si-card {
+    @apply rounded-2xl border border-slate-200/80 bg-white/90 shadow-soft backdrop-blur-sm;
+  }
+  .si-card-elevated {
+    @apply rounded-2xl border border-slate-100 bg-white shadow-glow;
+  }
+  .si-input {
+    @apply w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-ink-900 shadow-inner shadow-slate-100/50 outline-none transition placeholder:text-ink-400 focus:border-brand-300 focus:ring-2 focus:ring-brand-100;
+  }
+  .si-label {
+    @apply mb-1.5 block text-xs font-semibold uppercase tracking-wide text-ink-500;
+  }
+  .si-btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-brand-600 to-brand-500 px-5 py-2.5 text-sm font-semibold text-white shadow-soft transition hover:from-brand-700 hover:to-brand-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .si-btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-ink-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50;
+  }
+  .si-btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-ink-600 transition hover:bg-slate-100 hover:text-ink-900;
+  }
+  .si-pill {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white/80 px-3 py-1 text-xs font-medium text-ink-600;
+  }
+}

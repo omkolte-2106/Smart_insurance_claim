@@ -1,0 +1,31 @@
+# IDEs
+.idea/
+.vscode/
+
+# Local data & logs
+logs/
+*.log
+smartinsure-uploads/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Java / Spring Boot
+target/
+.mvn/
+*.class
+
+# Node / React
+node_modules/
+dist/
+.env
+
+# Scratch and Repo files (often temporary)
+scratch_*.js
+scratch_*.ps1
+repro_*.js
+DBCheck.java
+db_check.py

@@ -1,0 +1,3 @@
+Place ONNX / PKL / joblib / PyTorch weights here, e.g.:
+- models/damage/severity.onnx
+- models/fraud/model.pkl

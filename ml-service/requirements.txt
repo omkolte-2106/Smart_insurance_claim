@@ -1,0 +1,17 @@
+fastapi==0.110.2
+uvicorn[standard]==0.29.0
+pydantic==2.7.1
+python-multipart==0.0.9
+fastapi==0.110.2
+uvicorn[standard]==0.29.0
+pydantic==2.7.1
+python-multipart==0.0.9
+tensorflow>=2.15.0
+h5py>=3.10.0
+Pillow>=10.0.0
+numpy>=1.24.0
+xgboost>=2.0.0
+pandas>=2.0.0
+scikit-learn>=1.2.0
+torch>=2.0.0
+torchvision>=0.15.0
