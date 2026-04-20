@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Building2, ClipboardList, LayoutDashboard, Percent, Search, UserCircle, Wallet } from "lucide-react";
+import { Building2, ClipboardList, LayoutDashboard, Percent, Search, UserCircle, Wallet, X, ExternalLink, CheckCircle, AlertCircle, MessageSquare } from "lucide-react";
 import api from "../../api/client";
 import { AppShell } from "../../components/layout/AppShell";
 import { KpiCard } from "../../components/ui/KpiCard";
@@ -29,6 +29,10 @@ export const CompanyDashboard = () => {
   const [bulkFile, setBulkFile] = useState<File | null>(null);
   const [bulkProcessing, setBulkProcessing] = useState(false);
   const [bulkResult, setBulkResult] = useState<any>(null);
+  
+  const [selectedClaim, setSelectedClaim] = useState<any | null>(null);
+  const [reviewRemarks, setReviewRemarks] = useState("");
+  const [reviewLoading, setReviewLoading] = useState(false);
 
   const downloadCsv = async (prefill: boolean) => {
     try {
@@ -111,7 +115,7 @@ export const CompanyDashboard = () => {
           <KpiCard
             title="Exposure (est.)"
             value={`₹${Number(dash.estimatedPayoutExposure || 0).toLocaleString("en-IN")}`}
-            hint="Sum of AI payout recommendations"
+            hint="Sum of approved claim payouts"
             icon={Wallet}
             accent="accent"
           />
@@ -250,11 +254,18 @@ export const CompanyDashboard = () => {
             <div className="text-sm font-semibold text-ink-950">Recent claims</div>
             <div className="text-xs text-ink-500">Latest submissions from your policyholders</div>
           </div>
-          <Link to="/search" className="si-btn-secondary px-4 py-2 text-xs">
-            <Search className="h-4 w-4" />
-            Search vehicle
-          </Link>
-        </div>
+            <div className="flex items-center gap-4">
+              {claims?.length > 0 && (
+                <button onClick={() => setClaims([])} className="text-[10px] font-bold text-ink-400 hover:text-ink-600 transition-colors uppercase tracking-wider">
+                  Clear list
+                </button>
+              )}
+              <Link to="/search" className="si-btn-secondary px-4 py-2 text-xs">
+                <Search className="h-4 w-4" />
+                Search vehicle
+              </Link>
+            </div>
+          </div>
         <div className="mt-5 divide-y divide-slate-100">
           {claims?.length ? (
             claims.map((cl) => (
@@ -263,9 +274,19 @@ export const CompanyDashboard = () => {
                   <div className="font-semibold text-ink-950">{cl.claimPublicId}</div>
                   <div className="text-xs text-ink-500">{cl.policyNumber}</div>
                 </div>
-                <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-ink-700 ring-1 ring-slate-200/70">
-                  {cl.status?.replace(/_/g, " ")}
-                </span>
+                <div className="flex items-center gap-4">
+                  <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-ink-700 ring-1 ring-slate-200/70">
+                    {cl.status?.replace(/_/g, " ")}
+                  </span>
+                  {(cl.status === "MANUAL_REVIEW_PENDING" || cl.status === "FRAUD_FLAGGED" || cl.status === "AI_VERIFIED") && (
+                    <button 
+                      onClick={() => setSelectedClaim(cl)}
+                      className="si-btn-primary px-3 py-1 text-[10px]"
+                    >
+                      Review
+                    </button>
+                  )}
+                </div>
               </div>
             ))
           ) : (
@@ -327,6 +348,134 @@ export const CompanyDashboard = () => {
           </div>
         )}
       </Card>
+
+      {selectedClaim && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/40 backdrop-blur-sm p-4">
+          <Card className="w-full max-w-2xl max-h-[90vh] overflow-y-auto p-0 flex flex-col">
+            <div className="sticky top-0 bg-white z-10 px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-bold text-ink-950">{selectedClaim.claimPublicId} Review</h3>
+                <p className="text-xs text-ink-500">{selectedClaim.policyNumber} • {selectedClaim.vehicleRegistration}</p>
+              </div>
+              <button onClick={() => setSelectedClaim(null)} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
+                <X className="h-5 w-5 text-ink-500" />
+              </button>
+            </div>
+            
+            <div className="p-6 space-y-6">
+              <div className="grid grid-cols-3 gap-4">
+                <div className="rounded-xl bg-slate-50 p-3 border border-slate-100 text-center">
+                  <div className="text-[10px] uppercase font-bold text-ink-400 mb-1">AI Severity</div>
+                  <div className="text-xl font-black text-ink-900">{(selectedClaim.damageSeverityScore * 100).toFixed(0)}%</div>
+                </div>
+                <div className="rounded-xl bg-slate-50 p-3 border border-slate-100 text-center">
+                  <div className="text-[10px] uppercase font-bold text-ink-400 mb-1">AI Fraud</div>
+                  <div className="text-xl font-black text-ink-900">{(selectedClaim.fraudScore || 0).toFixed(0)}%</div>
+                </div>
+                <div className="rounded-xl bg-slate-50 p-3 border border-slate-100 text-center">
+                  <div className="text-[10px] uppercase font-bold text-ink-400 mb-1">Est. Payout</div>
+                  <div className="text-xl font-black text-brand-600">₹{Number(selectedClaim.estimatedPayoutAmount || 0).toLocaleString()}</div>
+                </div>
+              </div>
+
+              <div>
+                <h4 className="text-[10px] uppercase font-bold text-ink-400 mb-3 tracking-widest flex items-center gap-2">
+                  <ClipboardList className="h-3 w-3" /> Submitted Documents
+                </h4>
+                <div className="space-y-2">
+                  {selectedClaim.documents?.map((doc: any) => (
+                    <div key={doc.id} className="flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-white hover:border-brand-200 transition-colors group">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 bg-slate-50 rounded-lg group-hover:bg-brand-50 transition-colors">
+                          <ClipboardList className="h-4 w-4 text-ink-600 group-hover:text-brand-600" />
+                        </div>
+                        <div>
+                          <p className="text-xs font-semibold text-ink-950 uppercase">{doc.documentType.replace(/_/g, " ")}</p>
+                          <p className="text-[10px] text-ink-500">{doc.originalFilename}</p>
+                        </div>
+                      </div>
+                      <a 
+                        href={`${api.defaults.baseURL}/claims/${selectedClaim.claimPublicId}/documents/${doc.id}/content?token=${localStorage.getItem("si_token")}`}
+                        target="_blank" 
+                        rel="noreferrer"
+                        className="flex items-center gap-1 text-[10px] font-bold text-brand-600 hover:text-brand-700 bg-brand-50 px-3 py-1.5 rounded-lg"
+                      >
+                        <ExternalLink className="h-3 w-3" /> View
+                      </a>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <h4 className="text-[10px] uppercase font-bold text-ink-400 mb-3 tracking-widest flex items-center gap-2">
+                  <MessageSquare className="h-3 w-3" /> Incident Details
+                </h4>
+                <div className="p-4 rounded-xl bg-slate-50 border border-slate-100 text-xs text-ink-700 leading-relaxed italic">
+                  "{selectedClaim.incidentDescription}"
+                </div>
+              </div>
+
+              <div className="pt-4 border-t border-slate-100">
+                <label className="block text-[11px] font-bold text-ink-950 mb-2">Manual Review Decision & Remarks</label>
+                <textarea 
+                  className="si-input w-full min-h-[100px] text-xs py-3"
+                  placeholder="Provide reasoning for your decision (e.g. Damage matches description, suspicious metadata found, etc.)"
+                  value={reviewRemarks}
+                  onChange={(e) => setReviewRemarks(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="sticky bottom-0 bg-white p-6 border-t border-slate-100 flex gap-3">
+              <button 
+                disabled={reviewLoading}
+                onClick={async () => {
+                  setReviewLoading(true);
+                  try {
+                    await api.post(`/company/claims/${selectedClaim.claimPublicId}/decision`, {
+                      targetStatus: "REJECTED",
+                      remarks: reviewRemarks
+                    });
+                    setSelectedClaim(null);
+                    setReviewRemarks("");
+                    // Refresh listing
+                    const [d, c] = await Promise.all([api.get("/company/dashboard"), api.get("/claims?size=8")]);
+                    setDash(d.data);
+                    setClaims(c.data.content ?? c.data);
+                  } catch (e: any) { alert("Action failed: " + (e.response?.data?.message || e.message)); }
+                  finally { setReviewLoading(false); }
+                }}
+                className="si-btn-secondary flex-1 py-3 text-xs border-red-200 text-red-600 hover:bg-red-50"
+              >
+                <AlertCircle className="h-4 w-4" /> Reject Claim
+              </button>
+              <button 
+                disabled={reviewLoading}
+                onClick={async () => {
+                  setReviewLoading(true);
+                  try {
+                    await api.post(`/company/claims/${selectedClaim.claimPublicId}/decision`, {
+                      targetStatus: "APPROVED",
+                      remarks: reviewRemarks
+                    });
+                    setSelectedClaim(null);
+                    setReviewRemarks("");
+                    // Refresh listing
+                    const [d, c] = await Promise.all([api.get("/company/dashboard"), api.get("/claims?size=8")]);
+                    setDash(d.data);
+                    setClaims(c.data.content ?? c.data);
+                  } catch (e: any) { alert("Action failed: " + (e.response?.data?.message || e.message)); }
+                  finally { setReviewLoading(false); }
+                }}
+                className="si-btn-primary flex-1 py-3 text-xs"
+              >
+                <CheckCircle className="h-4 w-4" /> Approve Claim
+              </button>
+            </div>
+          </Card>
+        </div>
+      )}
     </AppShell>
   );
 };

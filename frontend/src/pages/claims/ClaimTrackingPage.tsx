@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import toast from "react-hot-toast";
-import { Activity, Download, FileText, Sparkles, Wrench, AlertTriangle, CheckCircle2, ShieldAlert } from "lucide-react";
+import { Activity, Download, FileText, Sparkles, Wrench, AlertTriangle, CheckCircle2, ShieldAlert, MessageSquare } from "lucide-react";
 import api from "../../api/client";
 import { Card } from "../../components/ui/Card";
 import { StatusBadge } from "../../components/ui/StatusBadge";
@@ -173,6 +173,22 @@ export const ClaimTrackingPage = () => {
               </Card>
             )}
 
+            {claim.remarks && claim.remarks.length > 0 && (
+              <Card className="p-6 border-amber-100 bg-amber-50/20">
+                <div className="flex items-center gap-2 text-sm font-semibold text-ink-950">
+                  <MessageSquare className="h-4 w-4 text-amber-600" />
+                  Reviewer comments
+                </div>
+                <div className="mt-4 space-y-4">
+                  {claim.remarks.map((remark: string, i: number) => (
+                    <div key={i} className="text-xs text-ink-700 leading-relaxed border-l-2 border-amber-200 pl-3 py-1">
+                      {remark}
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            )}
+
             <Card className="p-6">
               <div className="flex items-center gap-2 text-sm font-semibold text-ink-950">
                 <FileText className="h-4 w-4 text-brand-600" />
@@ -181,8 +197,18 @@ export const ClaimTrackingPage = () => {
               <ul className="mt-4 space-y-2 text-sm text-ink-700">
                 {claim.documents?.map((d: any) => (
                   <li key={d.id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200/70 bg-white/70 px-3 py-2">
-                    <span className="font-medium">{d.documentType.replace(/_/g, " ")}</span>
-                    <span className="text-xs text-ink-500">{d.verificationStatus}</span>
+                    <div className="flex flex-col">
+                      <span className="font-medium">{d.documentType.replace(/_/g, " ")}</span>
+                      <span className="text-[10px] text-ink-500 uppercase">{d.verificationStatus}</span>
+                    </div>
+                    <a 
+                      href={`/api/claims/${claim.claimPublicId}/documents/${d.id}/content?token=${localStorage.getItem("si_token")}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[10px] font-bold text-brand-600 hover:text-brand-700 bg-brand-50 px-2.5 py-1 rounded-md"
+                    >
+                      View
+                    </a>
                   </li>
                 ))}
               </ul>

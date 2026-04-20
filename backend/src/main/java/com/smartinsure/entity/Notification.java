@@ -30,6 +30,7 @@ public class Notification extends BaseEntity {
     @Column(nullable = false, length = 2000)
     private String body;
 
+    @Builder.Default
     @Column(nullable = false)
     private boolean readFlag = false;
 }

@@ -8,4 +8,6 @@ import org.springframework.web.multipart.MultipartFile;
 public interface FileStorageService {
 
     StoredFile storeClaimDocument(Long claimId, MultipartFile file);
+
+    org.springframework.core.io.Resource getClaimDocumentResource(String relativePath);
 }

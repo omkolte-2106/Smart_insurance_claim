@@ -34,6 +34,7 @@ public class FraudFlag extends BaseEntity {
     @Column(nullable = false, length = 1200)
     private String description;
 
+    @Builder.Default
     @Column(nullable = false)
     private boolean active = true;
 }

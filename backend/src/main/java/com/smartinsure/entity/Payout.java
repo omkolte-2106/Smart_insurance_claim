@@ -32,6 +32,7 @@ public class Payout extends BaseEntity {
     @Column(precision = 14, scale = 2)
     private BigDecimal finalAmount;
 
+    @Builder.Default
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private PayoutStatus status = PayoutStatus.ESTIMATED;

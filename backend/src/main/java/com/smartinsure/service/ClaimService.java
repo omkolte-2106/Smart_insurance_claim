@@ -180,8 +180,15 @@ public class ClaimService {
         persistVerification(claim, MODULE_DAMAGE, damageResp);
         claim.setDamageSeverityScore(damageResp.severityScore());
 
-        // NEW: Detect damaged parts
-        MlDamagePartsResponse partsResp = mlServiceClient.detectPartsDamage(damagePayload);
+        // Detect damaged parts
+        MlDamagePartsResponse partsResp;
+        if (damagePhoto.isPresent()) {
+            java.nio.file.Path fullPath = java.nio.file.Paths.get(properties.getStorage().getRootPath(), damagePhoto.get().getStoredPath());
+            partsResp = mlServiceClient.detectPartsDamage(fullPath);
+        } else {
+            partsResp = mlServiceClient.detectPartsDamage(null); // Will use fallback
+        }
+
         if (partsResp.detectedParts() != null) {
             claim.setDamagedParts(String.join(",", partsResp.detectedParts()));
         }
@@ -259,6 +266,22 @@ public class ClaimService {
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Claim not found"));
         assertAccess(user, claim);
         return toSummary(claim);
+    }
+
+    @Transactional(readOnly = true)
+    public org.springframework.core.io.Resource getDocumentResource(SecurityUser user, String claimPublicId, Long documentId) {
+        Claim claim = claimRepository.findByClaimPublicIdIgnoreCase(claimPublicId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Claim not found"));
+        assertAccess(user, claim);
+
+        ClaimDocument doc = claimDocumentRepository.findById(documentId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Document not found"));
+        
+        if (!doc.getClaim().getId().equals(claim.getId())) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "Document does not belong to this claim");
+        }
+
+        return fileStorageService.getClaimDocumentResource(doc.getStoredPath());
     }
 
     @Transactional(readOnly = true)
@@ -381,6 +404,11 @@ public class ClaimService {
         List<ClaimDocumentDto> docs = claimDocumentRepository.findByClaimId(claim.getId()).stream()
                 .map(this::toDocDto)
                 .toList();
+        List<String> remarks = claim.getRemarks().stream()
+                .sorted(Comparator.comparing(BaseEntity::getCreatedAt).reversed())
+                .map(r -> r.getAuthor().getEmail() + ": " + r.getRemarkText())
+                .toList();
+
         return ClaimSummaryDto.builder()
                 .id(claim.getId())
                 .claimPublicId(claim.getClaimPublicId())
@@ -395,6 +423,7 @@ public class ClaimService {
                 .vehicleRegistration(claim.getPolicy().getVehicle().getRegistrationNumber())
                 .createdAt(claim.getCreatedAt())
                 .documents(docs)
+                .remarks(remarks)
                 .damagedParts(claim.getDamagedParts() != null ? 
                         Arrays.stream(claim.getDamagedParts().split(","))
                                 .filter(s -> !s.isBlank())

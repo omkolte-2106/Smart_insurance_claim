@@ -25,4 +25,5 @@ public class ClaimSummaryDto {
     Instant createdAt;
     List<ClaimDocumentDto> documents;
     List<String> damagedParts;
+    List<String> remarks;
 }

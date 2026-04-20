@@ -38,6 +38,7 @@ public class CustomerProfile extends BaseEntity {
     @Column(nullable = false)
     private double loyaltyScore;
 
+    @Builder.Default
     @Column(nullable = false)
     private boolean banned = false;
 

@@ -34,10 +34,12 @@ public class CompanyProfile extends BaseEntity {
     @Column(length = 40)
     private String gstNumber;
 
+    @Builder.Default
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private CompanyApprovalStatus approvalStatus = CompanyApprovalStatus.PENDING;
 
+    @Builder.Default
     @Column(nullable = false)
     private boolean banned = false;
 

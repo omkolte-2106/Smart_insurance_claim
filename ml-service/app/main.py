@@ -16,6 +16,7 @@ import pandas as pd
 import io
 import pickle
 from PIL import Image
+from ultralytics import YOLO
 
 try:
     import tensorflow as tf
@@ -29,8 +30,12 @@ logger = logging.getLogger("uvicorn.error")
 
 app = FastAPI(title="SmartInsure ML Service", version="0.1.0")
 
+# Load models
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "..", "models", "car_damage_severity_model.h5")
+YOLO_MODEL_PATH = os.path.join(os.path.dirname(__file__), "..", "models", "best.pt")
+
 severity_model = None
+yolo_model = None
 
 if TF_AVAILABLE and os.path.exists(MODEL_PATH):
     try:
@@ -65,11 +70,25 @@ if TF_AVAILABLE and os.path.exists(MODEL_PATH):
         logger.info(f"Successfully loaded severity model from {MODEL_PATH}")
     except Exception as e:
         logger.error(f"Failed to load severity model: {e}")
+
+if os.path.exists(YOLO_MODEL_PATH):
+    try:
+        yolo_model = YOLO(YOLO_MODEL_PATH)
+        logger.info(f"Successfully loaded YOLO model from {YOLO_MODEL_PATH}")
+    except Exception as e:
+        logger.error(f"Failed to load YOLO model: {e}")
 else:
     if not TF_AVAILABLE:
         logger.warning("TensorFlow is not installed. Models cannot be loaded.")
     if not os.path.exists(MODEL_PATH):
         logger.warning(f"Model file not found at {MODEL_PATH}.")
+
+if os.path.exists(YOLO_MODEL_PATH):
+    try:
+        yolo_model = YOLO(YOLO_MODEL_PATH)
+        logger.info(f"Successfully loaded YOLO model from {YOLO_MODEL_PATH}")
+    except Exception as e:
+        logger.error(f"Failed to load YOLO model: {e}")
 
 # --- Preprocessing Helpers ---
 
@@ -128,7 +147,18 @@ def health():
 async def analyze_damage(file: UploadFile = File(...)):
     """
     Performs real 'scanning' of an uploaded vehicle image.
-    Returns severity score and label.
+    Returns severity score and label based on the 3-class softmax output.
+    
+    Model architecture:
+      Input(224x224x3) -> [RandomFlip, RandomRotation, RandomZoom] (data aug, inactive during inference)
+      -> TrueDivide(/127.5) -> Subtract(-1.0) -> MobileNetV2 -> GlobalAvgPool -> Dropout -> Dense(3, softmax)
+    
+    Output classes (softmax): [class_0, class_1, class_2]
+    We interpret them as: [MINOR, MODERATE, SEVERE]
+    
+    Severity score is computed as a weighted average:
+      score = 0.0 * P(MINOR) + 0.5 * P(MODERATE) + 1.0 * P(SEVERE)
+    This gives a continuous 0-1 value that reflects the full probability distribution.
     """
     if severity_model is None:
         return {"error": "Model not loaded", "severityScore": 0.5, "severityLabel": "MODERATE (Fallback)"}
@@ -139,28 +169,40 @@ async def analyze_damage(file: UploadFile = File(...)):
         
         # Inference
         prediction = severity_model.predict(processed_img, verbose=0)
-        logger.info(f"Raw Prediction Array for {file.filename}: {prediction}")
-        logger.info(f"Input image data stats - Mean: {np.mean(processed_img):.4f}, Std: {np.std(processed_img):.4f}")
+        probs = prediction[0]  # Shape: (3,) — softmax probabilities
         
-        # Determine average severity from prediction (MobileNet outputs are often softmax)
-        # If it's a multi-class output (e.g. Minor, Moderate, Severe)
-        if prediction.shape[1] > 1:
-            class_idx = int(np.argmax(prediction[0]))
-            score = float(prediction[0][class_idx])
-            labels = ["MINOR", "MODERATE", "SEVERE"]
-            label = labels[class_idx] if class_idx < len(labels) else "UNKNOWN"
+        logger.info(f"=== DAMAGE ANALYSIS for {file.filename} ===")
+        logger.info(f"  Raw softmax: MINOR={probs[0]:.4f}, MODERATE={probs[1]:.4f}, SEVERE={probs[2]:.4f}")
+        logger.info(f"  Input stats: mean={np.mean(processed_img):.2f}, std={np.std(processed_img):.2f}")
+        
+        # Weighted severity score: 0*P(minor) + 0.5*P(moderate) + 1.0*P(severe)
+        severity_score = 0.0 * float(probs[0]) + 0.5 * float(probs[1]) + 1.0 * float(probs[2])
+        
+        # Determine dominant class
+        class_idx = int(np.argmax(probs))
+        class_labels = ["MINOR", "MODERATE", "SEVERE"]
+        dominant_label = class_labels[class_idx]
+        
+        # Final label based on the weighted score (more nuanced than just argmax)
+        if severity_score >= 0.6:
+            final_label = "SEVERE"
+        elif severity_score >= 0.3:
+            final_label = "MODERATE"
         else:
-            # Regression output
-            score = float(np.mean(prediction))
-            if score > 0.7: label = "SEVERE"
-            elif score > 0.4: label = "MODERATE"
-            else: label = "MINOR"
+            final_label = "MINOR"
+        
+        logger.info(f"  Weighted severity score: {severity_score:.4f} -> {final_label}")
 
         return {
-            "severityScore": round(score, 4),
-            "severityLabel": label,
-            "modelVersion": "car_damage_severity_model.h5 v1.1 (Scanned)",
-            "fileName": file.filename
+            "severityScore": round(severity_score, 4),
+            "severityLabel": final_label,
+            "modelVersion": "car_damage_severity_model.h5 v1.2 (Weighted Softmax)",
+            "fileName": file.filename,
+            "classBreakdown": {
+                "minor": round(float(probs[0]), 4),
+                "moderate": round(float(probs[1]), 4),
+                "severe": round(float(probs[2]), 4)
+            }
         }
     except Exception as e:
         logger.error(f"Error during image analysis: {e}")
@@ -217,21 +259,41 @@ def fraud_detection(payload: FraudPayload):
 
 
 @app.post("/ml/part-damage-detection")
-def part_damage_detection(payload: DamagePayload):
+async def part_damage_detection(file: UploadFile = File(...)):
     """
-    Simulated part detection since the specialized model was integrated.
+    Real part detection using the integrated YOLOv8 model.
     """
-    possible_parts = ["Front Bumper", "Left Headlight", "Right Headlight", "Hood", "Windshield", "Grille"]
-    seed = sum(ord(c) for c in payload.claimPublicId)
-    np.random.seed(seed)
-    count = np.random.randint(1, 4)
-    detected_parts = list(np.random.choice(possible_parts, count, replace=False))
+    if yolo_model is None:
+        return {"detectedParts": ["BUMPER (Fallback)"], "severity": "MEDIUM", "modelVersion": "fallback"}
     
-    return {
-        "detectedParts": detected_parts,
-        "severity": "HIGH" if len(detected_parts) > 2 else "MEDIUM",
-        "modelVersion": "car_damage_v1.0 (Integrated)"
-    }
+    try:
+        content = await file.read()
+        img = Image.open(io.BytesIO(content))
+        
+        # Run inference
+        results = yolo_model.predict(img, conf=0.25)
+        
+        detected_parts = []
+        for result in results:
+            for box in result.boxes:
+                class_id = int(box.cls[0])
+                label = yolo_model.names[class_id]
+                # Format label for display (e.g. front-bumper-dent -> Front Bumper Dent)
+                formatted_label = label.replace("-", " ").title()
+                detected_parts.append(formatted_label)
+        
+        # Unique parts only
+        unique_parts = list(set(detected_parts))
+        
+        return {
+            "detectedParts": unique_parts,
+            "severity": "HIGH" if len(unique_parts) > 3 else "MEDIUM",
+            "modelVersion": "yolov8-damage-detection-v1.0",
+            "detectionCount": len(detected_parts)
+        }
+    except Exception as e:
+        logger.error(f"Error during part detection: {e}")
+        return {"error": str(e), "detectedParts": [], "severity": "UNKNOWN"}
 
 
 @app.post("/ml/payout-estimation")

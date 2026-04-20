@@ -39,6 +39,7 @@ public class ClaimDocument extends BaseEntity {
 
     private Long sizeBytes;
 
+    @Builder.Default
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 32)
     private DocumentVerificationStatus verificationStatus = DocumentVerificationStatus.PENDING_UPLOAD;

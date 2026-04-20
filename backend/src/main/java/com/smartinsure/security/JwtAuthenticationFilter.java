@@ -26,9 +26,17 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
+        String token = null;
         String header = request.getHeader(HttpHeaders.AUTHORIZATION);
+        
         if (StringUtils.hasText(header) && header.startsWith("Bearer ")) {
-            String token = header.substring(7);
+            token = header.substring(7);
+        } else {
+            // Fallback to query parameter for browser-direct links (e.g. document view)
+            token = request.getParameter("token");
+        }
+
+        if (StringUtils.hasText(token)) {
             try {
                 String email = jwtTokenProvider.getEmail(token);
                 UserDetails userDetails = userDetailsService.loadUserByUsername(email);

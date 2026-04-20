@@ -58,4 +58,22 @@ public class ClaimController {
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + claimPublicId + ".txt\"")
                 .body(body);
     }
+
+    @GetMapping("/{claimPublicId}/documents/{documentId}/content")
+    public ResponseEntity<org.springframework.core.io.Resource> getDocumentContent(
+            @PathVariable String claimPublicId,
+            @PathVariable Long documentId) {
+        org.springframework.core.io.Resource resource = claimService.getDocumentResource(
+                currentUserService.currentUser(), claimPublicId, documentId);
+        
+        String contentType = "application/octet-stream";
+        try {
+            contentType = java.nio.file.Files.probeContentType(java.nio.file.Paths.get(resource.getURI()));
+        } catch (Exception ignored) {}
+
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(contentType))
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + resource.getFilename() + "\"")
+                .body(resource);
+    }
 }

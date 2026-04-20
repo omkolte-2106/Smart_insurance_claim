@@ -87,14 +87,33 @@ public class MlServiceClient {
         }
     }
 
-    public MlDamagePartsResponse detectPartsDamage(Map<String, Object> payload) {
-        if (!properties.getMlService().isEnabled()) {
-            return new MlDamagePartsResponse(List.of("BUMPER"), "MEDIUM", "placeholder");
+    public MlDamagePartsResponse detectPartsDamage(java.nio.file.Path imagePath) {
+        if (!properties.getMlService().isEnabled() || !java.nio.file.Files.exists(imagePath)) {
+            return new MlDamagePartsResponse(List.of("BUMPER"), "MEDIUM", "placeholder (file missing or service disabled)");
         }
         try {
-            return post("/ml/part-damage-detection", payload, MlDamagePartsResponse.class);
-        } catch (RestClientException ex) {
-            log.warn("ML part damage detection fallback: {}", ex.getMessage());
+            org.springframework.util.MultiValueMap<String, Object> body = new org.springframework.util.LinkedMultiValueMap<>();
+            
+            // Explicitly set content type and filename for the file part
+            org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+            headers.setContentType(org.springframework.http.MediaType.IMAGE_JPEG);
+            org.springframework.core.io.FileSystemResource resource = new org.springframework.core.io.FileSystemResource(imagePath);
+            org.springframework.http.HttpEntity<org.springframework.core.io.FileSystemResource> entity = new org.springframework.http.HttpEntity<>(resource, headers);
+            
+            body.add("file", entity);
+
+            RestClient client = RestClient.builder()
+                    .baseUrl(properties.getMlService().getBaseUrl())
+                    .build();
+
+            return client.post()
+                    .uri("/ml/part-damage-detection")
+                    .contentType(MediaType.MULTIPART_FORM_DATA)
+                    .body(body)
+                    .retrieve()
+                    .body(MlDamagePartsResponse.class);
+        } catch (Exception ex) {
+            log.warn("ML part damage detection failure: {}", ex.getMessage());
             return new MlDamagePartsResponse(List.of("UNKNOWN"), "LOW", "fallback");
         }
     }

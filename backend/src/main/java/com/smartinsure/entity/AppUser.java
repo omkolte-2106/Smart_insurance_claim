@@ -29,10 +29,12 @@ public class AppUser extends BaseEntity {
     @Column(nullable = false, length = 32)
     private UserRole role;
 
+    @Builder.Default
     @Column(nullable = false)
     private boolean enabled = true;
 
     /** When true, login is blocked for every role. */
+    @Builder.Default
     @Column(nullable = false)
     private boolean banned = false;
 

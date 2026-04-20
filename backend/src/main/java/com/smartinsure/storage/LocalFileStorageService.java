@@ -54,6 +54,19 @@ public class LocalFileStorageService implements FileStorageService {
         }
     }
 
+    public org.springframework.core.io.Resource getClaimDocumentResource(String relativePath) {
+        try {
+            Path root = Paths.get(properties.getStorage().getRootPath()).toAbsolutePath().normalize();
+            Path file = root.resolve(relativePath).normalize();
+            if (Files.exists(file) && Files.isReadable(file)) {
+                return new org.springframework.core.io.UrlResource(file.toUri());
+            }
+            throw new ApiException(HttpStatus.NOT_FOUND, "File not found or not readable");
+        } catch (IOException ex) {
+            throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "Error reading file");
+        }
+    }
+
     private String extension(String filename) {
         int idx = filename.lastIndexOf('.');
         return idx == -1 ? "" : filename.substring(idx + 1);

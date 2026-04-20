@@ -55,6 +55,7 @@ public class InsurancePolicy extends BaseEntity {
     @Column(nullable = false)
     private LocalDate endDate;
 
+    @Builder.Default
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private PolicyStatus status = PolicyStatus.ACTIVE;

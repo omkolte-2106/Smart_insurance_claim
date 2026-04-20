@@ -43,6 +43,7 @@ public class CompanyAnalyticsService {
         long approved = claims.stream().filter(c -> c.getStatus() == ClaimStatus.APPROVED).count();
         long rejected = claims.stream().filter(c -> c.getStatus() == ClaimStatus.REJECTED).count();
         BigDecimal estPayout = claims.stream()
+                .filter(c -> c.getStatus() == ClaimStatus.APPROVED || c.getStatus() == ClaimStatus.SETTLED)
                 .map(Claim::getEstimatedPayoutAmount)
                 .filter(java.util.Objects::nonNull)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
