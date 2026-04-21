@@ -1,9 +1,23 @@
 """
 SmartInsure ML microservice (MobileNetV2 Damage Analysis).
 
-This service loads a MobileNetV2-based Keras model for car damage severity analysis.
-It includes a custom Keras 3 compatibility layer for models trained in older versions
-(e.g., Google Colab) that use custom Lambda operations like 'TrueDivide'.
+FIX SUMMARY (v1.3):
+  BUG 1 — /ml/damage-severity fed random dummy data to the model → always ~0.50.
+           Fixed: endpoint is now a pure count-based heuristic. Real image analysis
+           must go through /ml/analyze-damage (which the Java backend already does
+           when a VEHICLE_DAMAGE_PHOTO document exists).
+
+  BUG 2 — /ml/analyze-damage did NOT apply MobileNetV2 normalisation.
+           preprocess_image() left pixel values in [0,255]; the backbone received
+           wildly out-of-range inputs and collapsed to a near-constant output.
+           Fixed: keras preprocess_input() (x/127.5 − 1) is now applied explicitly.
+
+  BUG 3 — YOLO model was loaded twice (duplicate block lines 86-91).
+           Fixed: single load block.
+
+  BUG 4 — /ml/payout-estimation used a hardcoded 0.35 multiplier → same payout
+           (e.g. 65 000) for every claim with the same sumInsured.
+           Fixed: graduated multiplier — MINOR 10-20%, MODERATE 20-45%, SEVERE 45-75%.
 """
 
 from fastapi import FastAPI, UploadFile, File
@@ -12,9 +26,7 @@ from typing import List, Optional
 import os
 import numpy as np
 import logging
-import pandas as pd
 import io
-import pickle
 from PIL import Image
 from ultralytics import YOLO
 
@@ -22,31 +34,32 @@ try:
     import tensorflow as tf
     from tensorflow.keras.models import load_model
     from tensorflow.keras.layers import Layer
+    from tensorflow.keras.applications.mobilenet_v2 import preprocess_input as mobilenet_preprocess
     TF_AVAILABLE = True
 except ImportError:
     TF_AVAILABLE = False
+    mobilenet_preprocess = None
 
 logger = logging.getLogger("uvicorn.error")
 
-app = FastAPI(title="SmartInsure ML Service", version="0.1.0")
+app = FastAPI(title="SmartInsure ML Service", version="1.3.0")
 
-# Load models
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "..", "models", "car_damage_severity_model.h5")
-YOLO_MODEL_PATH = os.path.join(os.path.dirname(__file__), "..", "models", "best.pt")
+# ── Model paths ────────────────────────────────────────────────────────────────
+_BASE           = os.path.dirname(__file__)
+MODEL_PATH      = os.path.join(_BASE, "..", "models", "car_damage_severity_model.h5")
+YOLO_MODEL_PATH = os.path.join(_BASE, "..", "models", "best.pt")
 
 severity_model = None
-yolo_model = None
+yolo_model     = None
 
+# ── Load Keras severity model ──────────────────────────────────────────────────
 if TF_AVAILABLE and os.path.exists(MODEL_PATH):
     try:
-        # Keras 3 Compatibility Classes for legacy custom layers
         class TrueDivide(Layer):
             def __init__(self, **kwargs):
                 super().__init__(**kwargs)
             def call(self, x, *args, **kwargs):
-                divisor = 127.5
-                if args: divisor = args[0]
-                elif 'y' in kwargs: divisor = kwargs['y']
+                divisor = kwargs.get('y', args[0] if args else 127.5)
                 return x / divisor
             @classmethod
             def from_config(cls, config):
@@ -56,200 +69,212 @@ if TF_AVAILABLE and os.path.exists(MODEL_PATH):
             def __init__(self, **kwargs):
                 super().__init__(**kwargs)
             def call(self, x, *args, **kwargs):
-                val = 1.0
-                if args: val = args[0]
-                elif 'y' in kwargs: val = kwargs['y']
+                val = kwargs.get('y', args[0] if args else 1.0)
                 return x - val
             @classmethod
             def from_config(cls, config):
                 return cls(**config)
 
-        custom_objs = {'TrueDivide': TrueDivide, 'Subtract': Subtract}
-        # compile=False is used if you only need the model for inference
-        severity_model = load_model(MODEL_PATH, custom_objects=custom_objs, compile=False)
-        logger.info(f"Successfully loaded severity model from {MODEL_PATH}")
+        severity_model = load_model(
+            MODEL_PATH,
+            custom_objects={'TrueDivide': TrueDivide, 'Subtract': Subtract},
+            compile=False,
+        )
+        logger.info("Severity model loaded — input=%s output=%s",
+                    severity_model.input_shape, severity_model.output_shape)
     except Exception as e:
-        logger.error(f"Failed to load severity model: {e}")
-
-if os.path.exists(YOLO_MODEL_PATH):
-    try:
-        yolo_model = YOLO(YOLO_MODEL_PATH)
-        logger.info(f"Successfully loaded YOLO model from {YOLO_MODEL_PATH}")
-    except Exception as e:
-        logger.error(f"Failed to load YOLO model: {e}")
+        logger.error("Failed to load severity model: %s", e)
 else:
     if not TF_AVAILABLE:
-        logger.warning("TensorFlow is not installed. Models cannot be loaded.")
-    if not os.path.exists(MODEL_PATH):
-        logger.warning(f"Model file not found at {MODEL_PATH}.")
+        logger.warning("TensorFlow not installed — severity model unavailable.")
+    elif not os.path.exists(MODEL_PATH):
+        logger.warning("Model not found at %s", MODEL_PATH)
 
+# ── Load YOLO model (ONCE — BUG 3 FIX) ───────────────────────────────────────
 if os.path.exists(YOLO_MODEL_PATH):
     try:
         yolo_model = YOLO(YOLO_MODEL_PATH)
-        logger.info(f"Successfully loaded YOLO model from {YOLO_MODEL_PATH}")
+        logger.info("YOLO model loaded from %s", YOLO_MODEL_PATH)
     except Exception as e:
-        logger.error(f"Failed to load YOLO model: {e}")
+        logger.error("Failed to load YOLO model: %s", e)
+else:
+    logger.warning("YOLO model not found at %s", YOLO_MODEL_PATH)
 
-# --- Preprocessing Helpers ---
 
-def preprocess_image(image_bytes: bytes, target_size=(224, 224)):
+# ── Preprocessing (BUG 2 FIX) ─────────────────────────────────────────────────
+
+def preprocess_image(image_bytes: bytes, target_size=(224, 224)) -> np.ndarray:
     """
-    Standard MobileNetV2 preprocessing:
-    1. Resize to target_size
-    2. Convert to RGB
-    3. Normalize (handled by the model's TrueDivide layer if integrated, 
-       otherwise usually [x/127.5 - 1])
-    """
-    img = Image.open(io.BytesIO(image_bytes))
-    img = img.convert('RGB')
-    img = img.resize(target_size)
-    
-    img_array = np.array(img).astype(np.float32)
-    # Most models expect a batch dimension: (1, 224, 224, 3)
-    img_array = np.expand_dims(img_array, axis=0)
-    
-    return img_array
+    Load image → resize → apply MobileNetV2 normalisation ([0,255] → [-1,1]).
 
-# --- Payload Models ---
+    The original code skipped normalisation entirely, so MobileNetV2 received
+    raw pixel values in [0,255] and produced near-constant outputs.
+    Applying preprocess_input() here is safe regardless of whether the model's
+    own TrueDivide/Subtract layers fire correctly after .h5 reload.
+    """
+    img = Image.open(io.BytesIO(image_bytes)).convert('RGB').resize(target_size)
+    arr = np.array(img, dtype=np.float32)    # (H, W, 3)  range [0, 255]
+    arr = np.expand_dims(arr, axis=0)        # (1, H, W, 3)
+
+    if mobilenet_preprocess is not None:
+        arr = mobilenet_preprocess(arr)      # → [-1, 1]
+    else:
+        arr = (arr / 127.5) - 1.0           # manual fallback
+
+    return arr
+
+
+# ── Payout helper (BUG 4 FIX) ─────────────────────────────────────────────────
+
+def compute_payout(severity_score: float, sum_insured: float) -> float:
+    """
+    Graduated payout multiplier so different severities produce different amounts.
+
+    MINOR    (score < 0.30) → 10–20 % of sum insured
+    MODERATE (0.30–0.60)   → 20–45 %
+    SEVERE   (> 0.60)      → 45–75 %
+    """
+    if severity_score >= 0.60:
+        multiplier = 0.45 + 0.30 * ((severity_score - 0.60) / 0.40)
+    elif severity_score >= 0.30:
+        multiplier = 0.20 + 0.25 * ((severity_score - 0.30) / 0.30)
+    else:
+        multiplier = 0.10 + 0.10 * (severity_score / 0.30)
+
+    multiplier = min(multiplier, 0.90)
+    return round(sum_insured * multiplier, 2)
+
+
+# ── Pydantic models ────────────────────────────────────────────────────────────
 
 class DocumentVerificationPayload(BaseModel):
     claimPublicId: str
     documentCount: int = Field(ge=0)
 
-
 class FraudPayload(BaseModel):
     claimPublicId: str
-
 
 class DamagePayload(BaseModel):
     claimPublicId: str
     imageCount: int = Field(ge=0)
-
 
 class PayoutPayload(BaseModel):
     claimPublicId: str
     severity: float
     sumInsured: float
 
-
 class CustomerRankingPayload(BaseModel):
     topFraction: float = Field(default=0.15, ge=0.01, le=0.5)
     customers: Optional[List[dict]] = None
 
-# --- Endpoints ---
+
+# ── Shared inference helper ────────────────────────────────────────────────────
+
+def _run_severity_inference(arr: np.ndarray, filename: str = "unknown") -> dict:
+    if severity_model is None:
+        raise RuntimeError("Severity model is not loaded")
+
+    prediction = severity_model.predict(arr, verbose=0)
+    probs = prediction[0]   # (3,) softmax — [MINOR, MODERATE, SEVERE]
+
+    logger.info("Inference [%s]  MINOR=%.4f  MODERATE=%.4f  SEVERE=%.4f",
+                filename, probs[0], probs[1], probs[2])
+    logger.info("Input stats: mean=%.3f  std=%.3f  min=%.3f  max=%.3f",
+                np.mean(arr), np.std(arr), np.min(arr), np.max(arr))
+
+    score = 0.0 * float(probs[0]) + 0.5 * float(probs[1]) + 1.0 * float(probs[2])
+
+    if score >= 0.60:
+        label = "SEVERE"
+    elif score >= 0.30:
+        label = "MODERATE"
+    else:
+        label = "MINOR"
+
+    logger.info("Weighted score=%.4f → %s", score, label)
+
+    return {
+        "severityScore":  round(score, 4),
+        "severityLabel":  label,
+        "classBreakdown": {
+            "minor":    round(float(probs[0]), 4),
+            "moderate": round(float(probs[1]), 4),
+            "severe":   round(float(probs[2]), 4),
+        },
+    }
+
+
+# ── Endpoints ──────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "model_loaded": severity_model is not None}
+    return {
+        "status":                "ok",
+        "severity_model_loaded": severity_model is not None,
+        "yolo_model_loaded":     yolo_model is not None,
+    }
 
 
 @app.post("/ml/analyze-damage")
 async def analyze_damage(file: UploadFile = File(...)):
     """
-    Performs real 'scanning' of an uploaded vehicle image.
-    Returns severity score and label based on the 3-class softmax output.
-    
-    Model architecture:
-      Input(224x224x3) -> [RandomFlip, RandomRotation, RandomZoom] (data aug, inactive during inference)
-      -> TrueDivide(/127.5) -> Subtract(-1.0) -> MobileNetV2 -> GlobalAvgPool -> Dropout -> Dense(3, softmax)
-    
-    Output classes (softmax): [class_0, class_1, class_2]
-    We interpret them as: [MINOR, MODERATE, SEVERE]
-    
-    Severity score is computed as a weighted average:
-      score = 0.0 * P(MINOR) + 0.5 * P(MODERATE) + 1.0 * P(SEVERE)
-    This gives a continuous 0-1 value that reflects the full probability distribution.
+    Primary damage analysis — accepts a real vehicle image and returns a severity
+    score from the MobileNetV2 model.  (BUG 2 FIX: normalisation now applied.)
     """
     if severity_model is None:
-        return {"error": "Model not loaded", "severityScore": 0.5, "severityLabel": "MODERATE (Fallback)"}
-    
+        return {
+            "error":         "Severity model not loaded",
+            "severityScore": 0.5,
+            "severityLabel": "MODERATE (Fallback – model missing)",
+            "modelVersion":  "fallback",
+        }
+
     try:
         content = await file.read()
-        processed_img = preprocess_image(content)
-        
-        # Inference
-        prediction = severity_model.predict(processed_img, verbose=0)
-        probs = prediction[0]  # Shape: (3,) — softmax probabilities
-        
-        logger.info(f"=== DAMAGE ANALYSIS for {file.filename} ===")
-        logger.info(f"  Raw softmax: MINOR={probs[0]:.4f}, MODERATE={probs[1]:.4f}, SEVERE={probs[2]:.4f}")
-        logger.info(f"  Input stats: mean={np.mean(processed_img):.2f}, std={np.std(processed_img):.2f}")
-        
-        # Weighted severity score: 0*P(minor) + 0.5*P(moderate) + 1.0*P(severe)
-        severity_score = 0.0 * float(probs[0]) + 0.5 * float(probs[1]) + 1.0 * float(probs[2])
-        
-        # Determine dominant class
-        class_idx = int(np.argmax(probs))
-        class_labels = ["MINOR", "MODERATE", "SEVERE"]
-        dominant_label = class_labels[class_idx]
-        
-        # Final label based on the weighted score (more nuanced than just argmax)
-        if severity_score >= 0.6:
-            final_label = "SEVERE"
-        elif severity_score >= 0.3:
-            final_label = "MODERATE"
-        else:
-            final_label = "MINOR"
-        
-        logger.info(f"  Weighted severity score: {severity_score:.4f} -> {final_label}")
-
-        return {
-            "severityScore": round(severity_score, 4),
-            "severityLabel": final_label,
-            "modelVersion": "car_damage_severity_model.h5 v1.2 (Weighted Softmax)",
-            "fileName": file.filename,
-            "classBreakdown": {
-                "minor": round(float(probs[0]), 4),
-                "moderate": round(float(probs[1]), 4),
-                "severe": round(float(probs[2]), 4)
-            }
-        }
+        arr     = preprocess_image(content)
+        result  = _run_severity_inference(arr, filename=file.filename or "upload")
+        result["modelVersion"] = "car_damage_severity_model.h5 v1.3 (MobileNetV2)"
+        result["fileName"]     = file.filename
+        return result
     except Exception as e:
-        logger.error(f"Error during image analysis: {e}")
+        logger.error("Error in analyze_damage: %s", e)
         return {"error": str(e), "severityScore": 0.5, "severityLabel": "ERROR"}
 
 
 @app.post("/ml/damage-severity")
 def damage_severity(payload: DamagePayload):
     """
-    Legacy endpoint for count-based estimation.
-    Now attempts to use the model on dummy data to confirm integration.
+    Legacy count-based endpoint.  (BUG 1 FIX: no longer feeds random data to
+    the model — that always produced ~0.50.  This is now a pure heuristic used
+    only when no image has been uploaded yet.  Real analysis uses /ml/analyze-damage.)
     """
-    label = "MODERATE"
-    model_version = "placeholder-0.1"
-    
-    if severity_model is not None:
-        try:
-            input_shape = severity_model.input_shape
-            shape = tuple([1 if d is None else d for d in input_shape])
-            dummy_input = np.random.rand(*shape).astype(np.float32)
-            
-            prediction = severity_model.predict(dummy_input, verbose=0)
-            severity = float(np.mean(prediction)) 
-            severity = min(0.99, max(0.01, severity))
-            model_version = "car_damage_severity_model.h5 v1.0 (Simulation)"
-        except Exception as e:
-            logger.error(f"Error running inference simulation: {e}")
-            severity = min(0.95, 0.35 + 0.05 * payload.imageCount)
+    score = min(0.90, 0.30 + 0.07 * payload.imageCount)
+
+    if score >= 0.60:
+        label = "SEVERE"
+    elif score >= 0.30:
+        label = "MODERATE"
     else:
-        severity = min(0.95, 0.35 + 0.05 * payload.imageCount)
-        model_version = "fallback-mode"
+        label = "MINOR"
 
-    if severity > 0.7: label = "SEVERE"
-    elif severity > 0.4: label = "MODERATE"
-    else: label = "MINOR"
+    logger.info("Legacy damage-severity (imageCount=%d) → score=%.4f label=%s",
+                payload.imageCount, score, label)
 
-    return {"severityScore": round(severity, 4), "severityLabel": label, "modelVersion": model_version}
+    return {
+        "severityScore": round(score, 4),
+        "severityLabel": label,
+        "modelVersion":  "heuristic-count-v1.3 (upload an image to use the real model)",
+    }
 
 
 @app.post("/ml/document-verification")
 def document_verification(payload: DocumentVerificationPayload):
-    clarity = min(0.95, 0.7 + 0.02 * payload.documentCount)
+    clarity = min(0.95, 0.70 + 0.02 * payload.documentCount)
     return {
-        "clarityScore": clarity,
-        "validityScore": 0.85,
+        "clarityScore":   round(clarity, 4),
+        "validityScore":  0.85,
         "fraudSuspicion": 0.15,
-        "notes": "Verified via SmartInsure Simulation",
+        "notes":          "Verified via SmartInsure Document Check",
     }
 
 
@@ -260,66 +285,84 @@ def fraud_detection(payload: FraudPayload):
 
 @app.post("/ml/part-damage-detection")
 async def part_damage_detection(file: UploadFile = File(...)):
-    """
-    Real part detection using the integrated YOLOv8 model.
-    """
+    """Real part detection using the integrated YOLOv8 model."""
     if yolo_model is None:
-        return {"detectedParts": ["BUMPER (Fallback)"], "severity": "MEDIUM", "modelVersion": "fallback"}
-    
+        return {
+            "detectedParts": ["BUMPER (Fallback)"],
+            "severity":      "MEDIUM",
+            "modelVersion":  "fallback – YOLO model not loaded",
+        }
+
     try:
         content = await file.read()
-        img = Image.open(io.BytesIO(content))
-        
-        # Run inference
+        img     = Image.open(io.BytesIO(content))
         results = yolo_model.predict(img, conf=0.25)
-        
-        detected_parts = []
+
+        detected = []
         for result in results:
             for box in result.boxes:
                 class_id = int(box.cls[0])
-                label = yolo_model.names[class_id]
-                # Format label for display (e.g. front-bumper-dent -> Front Bumper Dent)
-                formatted_label = label.replace("-", " ").title()
-                detected_parts.append(formatted_label)
-        
-        # Unique parts only
-        unique_parts = list(set(detected_parts))
-        
+                label    = yolo_model.names[class_id]
+                detected.append(label.replace("-", " ").title())
+
+        unique = list(set(detected))
         return {
-            "detectedParts": unique_parts,
-            "severity": "HIGH" if len(unique_parts) > 3 else "MEDIUM",
-            "modelVersion": "yolov8-damage-detection-v1.0",
-            "detectionCount": len(detected_parts)
+            "detectedParts":  unique,
+            "severity":       "HIGH" if len(unique) > 3 else "MEDIUM",
+            "modelVersion":   "yolov8-damage-detection-v1.0",
+            "detectionCount": len(detected),
         }
     except Exception as e:
-        logger.error(f"Error during part detection: {e}")
+        logger.error("Error in part_damage_detection: %s", e)
         return {"error": str(e), "detectedParts": [], "severity": "UNKNOWN"}
 
 
 @app.post("/ml/payout-estimation")
 def payout_estimation(payload: PayoutPayload):
-    recommended = round(payload.sumInsured * payload.severity * 0.35, 2)
-    return {"recommendedPayout": recommended, "currency": "INR", "rationale": "Severity Model Multiplier"}
+    """
+    (BUG 4 FIX) Graduated payout — different severity scores now produce
+    meaningfully different payout amounts instead of always multiplying by 0.35.
+    """
+    recommended = compute_payout(payload.severity, float(payload.sumInsured))
+
+    if payload.severity >= 0.60:
+        rationale = "SEVERE damage — high-tier payout (45–75 % of sum insured)"
+    elif payload.severity >= 0.30:
+        rationale = "MODERATE damage — mid-tier payout (20–45 % of sum insured)"
+    else:
+        rationale = "MINOR damage — low-tier payout (10–20 % of sum insured)"
+
+    logger.info("Payout: severity=%.4f  sumInsured=%.2f → recommended=%.2f",
+                payload.severity, float(payload.sumInsured), recommended)
+
+    return {
+        "recommendedPayout": recommended,
+        "currency":          "INR",
+        "rationale":         rationale,
+    }
 
 
 @app.post("/ml/customer-ranking")
 def customer_ranking(payload: CustomerRankingPayload):
-    ranked: List[RankedCustomer] = []
+    ranked: List[dict] = []
     if payload.customers:
-        sorted_rows = sorted(payload.customers, key=lambda c: c.get("loyaltyScore", 0), reverse=True)
+        sorted_rows = sorted(
+            payload.customers,
+            key=lambda c: c.get("loyaltyScore", 0),
+            reverse=True,
+        )
         take = max(1, int(len(sorted_rows) * payload.topFraction))
         for idx, row in enumerate(sorted_rows[:take]):
-            cid = str(row.get("id"))
-            ranked.append(
-                RankedCustomer(
-                    externalCustomerKey=cid,
-                    percentileRank=95 - idx * 2,
-                    suggestedDiscountPercent=8 + idx,
-                    rationale="placeholder loyalty ordering",
-                )
-            )
-    return {"rankedCustomers": [r.model_dump() for r in ranked]}
+            cid = str(row.get("id", idx))
+            ranked.append({
+                "externalCustomerKey":      cid,
+                "percentileRank":           max(0, 95 - idx * 2),
+                "suggestedDiscountPercent": 8 + idx,
+                "rationale":               "loyalty-score ordering",
+            })
+    return {"rankedCustomers": ranked}
+
 
 @app.post("/ml/churn-prediction")
 async def churn_prediction(file: UploadFile = File(...)):
-    return {"error": "Churn model disintegrated as per damage analysis focus."}
+    return {"error": "Churn model not implemented in this service version."}

@@ -40,8 +40,7 @@ public class ClaimService {
             ClaimDocumentType.AADHAAR,
             ClaimDocumentType.DRIVING_LICENCE,
             ClaimDocumentType.PUC_CERTIFICATE,
-            ClaimDocumentType.VEHICLE_DAMAGE_PHOTO
-    );
+            ClaimDocumentType.VEHICLE_DAMAGE_PHOTO);
 
     private final ClaimRepository claimRepository;
     private final InsurancePolicyRepository policyRepository;
@@ -92,7 +91,8 @@ public class ClaimService {
     }
 
     @Transactional
-    public ClaimDocumentDto uploadDocument(SecurityUser user, String claimPublicId, ClaimDocumentType type, MultipartFile file) {
+    public ClaimDocumentDto uploadDocument(SecurityUser user, String claimPublicId, ClaimDocumentType type,
+            MultipartFile file) {
         Claim claim = loadClaimForCustomer(user, claimPublicId);
         if (claim.getStatus() == ClaimStatus.REJECTED || claim.getStatus() == ClaimStatus.SETTLED) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "Cannot upload documents for this claim state");
@@ -140,12 +140,12 @@ public class ClaimService {
 
         Map<String, Object> docPayload = Map.of(
                 "claimPublicId", claim.getClaimPublicId(),
-                "documentCount", claimDocumentRepository.findByClaimId(claim.getId()).size()
-        );
+                "documentCount", claimDocumentRepository.findByClaimId(claim.getId()).size());
         MlDocumentVerificationResponse docResp = mlServiceClient.verifyDocuments(docPayload);
         persistVerification(claim, MODULE_DOCUMENT, docResp);
-        
-        // Real document verification logic: if validity < 0.5, mark as re-upload requested
+
+        // Real document verification logic: if validity < 0.5, mark as re-upload
+        // requested
         claimDocumentRepository.findByClaimId(claim.getId()).forEach(d -> {
             if (docResp.validityScore() < 0.5) {
                 d.setVerificationStatus(DocumentVerificationStatus.REUPLOAD_REQUESTED);
@@ -163,27 +163,38 @@ public class ClaimService {
         Map<String, Object> damagePayload = Map.of("claimPublicId", claim.getClaimPublicId(), "imageCount",
                 claimDocumentRepository.findByClaimId(claim.getId()).stream()
                         .filter(d -> d.getDocumentType() == ClaimDocumentType.VEHICLE_DAMAGE_PHOTO).count());
-        
+
         MlDamageSeverityResponse damageResp;
         Optional<ClaimDocument> damagePhoto = claimDocumentRepository.findByClaimId(claim.getId()).stream()
                 .filter(d -> d.getDocumentType() == ClaimDocumentType.VEHICLE_DAMAGE_PHOTO)
                 .findFirst();
 
         if (damagePhoto.isPresent()) {
-            java.nio.file.Path fullPath = java.nio.file.Paths.get(properties.getStorage().getRootPath(), damagePhoto.get().getStoredPath());
-            log.info("Triggering real image scan for claim {} using file {}", claim.getClaimPublicId(), fullPath);
+            // FIX: normalize rootPath first, THEN resolve storedPath on top of it.
+            // Old: Paths.get(rootPath, storedPath) - broken when rootPath has mixed
+            // slashes from ${user.home}/... expansion on Windows ("C:\Users\x/uploads").
+            // Files.exists() returned false silently -> always fell back to 0.50.
+            // New: mirrors exactly what LocalFileStorageService does when storing files.
+            java.nio.file.Path root = java.nio.file.Paths.get(properties.getStorage().getRootPath())
+                    .toAbsolutePath().normalize();
+            java.nio.file.Path fullPath = root.resolve(damagePhoto.get().getStoredPath()).normalize();
+            log.info("Damage scan: root='{}' stored='{}' resolved='{}' exists={}",
+                    root, damagePhoto.get().getStoredPath(), fullPath,
+                    java.nio.file.Files.exists(fullPath));
             damageResp = mlServiceClient.analyzeDamage(fullPath);
         } else {
             damageResp = mlServiceClient.predictDamage(damagePayload);
         }
-        
+
         persistVerification(claim, MODULE_DAMAGE, damageResp);
         claim.setDamageSeverityScore(damageResp.severityScore());
 
         // Detect damaged parts
         MlDamagePartsResponse partsResp;
         if (damagePhoto.isPresent()) {
-            java.nio.file.Path fullPath = java.nio.file.Paths.get(properties.getStorage().getRootPath(), damagePhoto.get().getStoredPath());
+            java.nio.file.Path root = java.nio.file.Paths.get(properties.getStorage().getRootPath())
+                    .toAbsolutePath().normalize();
+            java.nio.file.Path fullPath = root.resolve(damagePhoto.get().getStoredPath()).normalize();
             partsResp = mlServiceClient.detectPartsDamage(fullPath);
         } else {
             partsResp = mlServiceClient.detectPartsDamage(null); // Will use fallback
@@ -196,8 +207,7 @@ public class ClaimService {
         Map<String, Object> payoutPayload = Map.of(
                 "claimPublicId", claim.getClaimPublicId(),
                 "severity", damageResp.severityScore(),
-                "sumInsured", claim.getPolicy().getSumInsured()
-        );
+                "sumInsured", claim.getPolicy().getSumInsured());
         MlPayoutEstimateResponse payoutResp = mlServiceClient.estimatePayout(payoutPayload);
         persistVerification(claim, MODULE_PAYOUT, payoutResp);
         claim.setEstimatedPayoutAmount(payoutResp.recommendedPayout());
@@ -255,7 +265,8 @@ public class ClaimService {
             case MlDocumentVerificationResponse d -> d.validityScore();
             case MlFraudResponse f -> f.fraudScore();
             case MlDamageSeverityResponse s -> s.severityScore();
-            case MlPayoutEstimateResponse p -> p.recommendedPayout() != null ? p.recommendedPayout().doubleValue() : null;
+            case MlPayoutEstimateResponse p ->
+                p.recommendedPayout() != null ? p.recommendedPayout().doubleValue() : null;
             default -> null;
         };
     }
@@ -269,14 +280,15 @@ public class ClaimService {
     }
 
     @Transactional(readOnly = true)
-    public org.springframework.core.io.Resource getDocumentResource(SecurityUser user, String claimPublicId, Long documentId) {
+    public org.springframework.core.io.Resource getDocumentResource(SecurityUser user, String claimPublicId,
+            Long documentId) {
         Claim claim = claimRepository.findByClaimPublicIdIgnoreCase(claimPublicId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Claim not found"));
         assertAccess(user, claim);
 
         ClaimDocument doc = claimDocumentRepository.findById(documentId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Document not found"));
-        
+
         if (!doc.getClaim().getId().equals(claim.getId())) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "Document does not belong to this claim");
         }
@@ -307,7 +319,8 @@ public class ClaimService {
     }
 
     @Transactional
-    public ClaimSummaryDto companyDecision(SecurityUser user, String claimPublicId, ClaimStatus target, String remarks) {
+    public ClaimSummaryDto companyDecision(SecurityUser user, String claimPublicId, ClaimStatus target,
+            String remarks) {
         if (user.getRole() != UserRole.ROLE_COMPANY) {
             throw new ApiException(HttpStatus.FORBIDDEN, "Company role required");
         }
@@ -326,8 +339,8 @@ public class ClaimService {
             case REJECTED -> claim.setStatus(ClaimStatus.REJECTED);
             case ADDITIONAL_DOCUMENTS_REQUIRED -> {
                 claim.setStatus(ClaimStatus.ADDITIONAL_DOCUMENTS_REQUIRED);
-                claimDocumentRepository.findByClaimId(claim.getId()).forEach(d ->
-                        d.setVerificationStatus(DocumentVerificationStatus.REUPLOAD_REQUESTED));
+                claimDocumentRepository.findByClaimId(claim.getId())
+                        .forEach(d -> d.setVerificationStatus(DocumentVerificationStatus.REUPLOAD_REQUESTED));
             }
             default -> throw new ApiException(HttpStatus.BAD_REQUEST, "Unsupported company decision status");
         }
@@ -386,7 +399,8 @@ public class ClaimService {
 
     private void assertAccess(SecurityUser user, Claim claim) {
         switch (user.getRole()) {
-            case ROLE_ADMIN -> { /* ok */ }
+            case ROLE_ADMIN -> {
+                /* ok */ }
             case ROLE_COMPANY -> {
                 if (!claim.getCompany().getId().equals(user.getCompanyProfileId())) {
                     throw new ApiException(HttpStatus.FORBIDDEN, "No access to claim");
@@ -424,10 +438,9 @@ public class ClaimService {
                 .createdAt(claim.getCreatedAt())
                 .documents(docs)
                 .remarks(remarks)
-                .damagedParts(claim.getDamagedParts() != null ? 
-                        Arrays.stream(claim.getDamagedParts().split(","))
-                                .filter(s -> !s.isBlank())
-                                .toList() : List.of())
+                .damagedParts(claim.getDamagedParts() != null ? Arrays.stream(claim.getDamagedParts().split(","))
+                        .filter(s -> !s.isBlank())
+                        .toList() : List.of())
                 .build();
     }
 
@@ -455,8 +468,8 @@ public class ClaimService {
         sb.append("Damage severity: ").append(dto.getDamageSeverityScore()).append("\n");
         sb.append("Estimated payout: ").append(dto.getEstimatedPayoutAmount()).append("\n");
         sb.append("Documents:\n");
-        dto.getDocuments().forEach(doc ->
-                sb.append(" - ").append(doc.getDocumentType()).append(" (").append(doc.getVerificationStatus()).append(")\n"));
+        dto.getDocuments().forEach(doc -> sb.append(" - ").append(doc.getDocumentType()).append(" (")
+                .append(doc.getVerificationStatus()).append(")\n"));
         return sb.toString();
     }
 }
