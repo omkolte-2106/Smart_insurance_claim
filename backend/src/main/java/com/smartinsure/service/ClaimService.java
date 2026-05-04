@@ -136,11 +136,13 @@ public class ClaimService {
 
     @Transactional
     public void runAiPipeline(Claim claim) {
+        log.info("Starting AI pipeline for claim publicId: '{}'", claim.getClaimPublicId());
         claim.setStatus(ClaimStatus.AI_VERIFICATION_IN_PROGRESS);
 
         Map<String, Object> docPayload = Map.of(
                 "claimPublicId", claim.getClaimPublicId(),
                 "documentCount", claimDocumentRepository.findByClaimId(claim.getId()).size());
+        log.info("Sending document verification request: {}", docPayload);
         MlDocumentVerificationResponse docResp = mlServiceClient.verifyDocuments(docPayload);
         persistVerification(claim, MODULE_DOCUMENT, docResp);
 
@@ -156,6 +158,7 @@ public class ClaimService {
         });
 
         Map<String, Object> fraudPayload = Map.of("claimPublicId", claim.getClaimPublicId());
+        log.info("Sending fraud detection request: {}", fraudPayload);
         MlFraudResponse fraudResp = mlServiceClient.scoreFraud(fraudPayload);
         persistVerification(claim, MODULE_FRAUD, fraudResp);
         claim.setFraudScore(fraudResp.fraudScore() * 100);
@@ -433,6 +436,7 @@ public class ClaimService {
                 .estimatedPayoutAmount(claim.getEstimatedPayoutAmount())
                 .fraudFlagged(claim.isFraudFlagged())
                 .companyName(claim.getCompany().getLegalName())
+                .customerName(claim.getCustomer().getFullName())
                 .policyNumber(claim.getPolicy().getPolicyNumber())
                 .vehicleRegistration(claim.getPolicy().getVehicle().getRegistrationNumber())
                 .createdAt(claim.getCreatedAt())

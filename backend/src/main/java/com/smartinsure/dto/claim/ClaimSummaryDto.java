@@ -20,6 +20,7 @@ public class ClaimSummaryDto {
     BigDecimal estimatedPayoutAmount;
     boolean fraudFlagged;
     String companyName;
+    String customerName;
     String policyNumber;
     String vehicleRegistration;
     Instant createdAt;

@@ -5,6 +5,7 @@ import com.smartinsure.ml.dto.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.MultipartBodyBuilder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
@@ -41,6 +42,7 @@ import java.util.Map;
 public class MlServiceClient {
 
     private final SmartInsureProperties properties;
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     // ── simple JSON endpoints ────────────────────────────────────────────────
 
@@ -118,21 +120,21 @@ public class MlServiceClient {
      */
     public MlDamageSeverityResponse analyzeDamage(Path imagePath) {
         if (!properties.getMlService().isEnabled()) {
-            log.warn("analyzeDamage: ML service disabled in config.");
-            return new MlDamageSeverityResponse(0.50, "MODERATE", "placeholder (service disabled)");
+            throw new IllegalStateException("ML service is disabled in configuration");
         }
 
-        // Normalise the path – fixes forward/back-slash mismatch on Windows
+        if (imagePath == null) {
+            throw new IllegalArgumentException("Damage image path is null");
+        }
+
         Path resolved = imagePath.toAbsolutePath().normalize();
         boolean exists = Files.exists(resolved);
         log.info("analyzeDamage: resolved path='{}' exists={}", resolved, exists);
 
         if (!exists) {
-            log.warn("analyzeDamage: file not found at '{}' – returning 0.50 fallback. " +
-                    "Check that storage.root-path in application.yml matches the directory " +
-                    "where uploaded files are actually saved.", resolved);
-            return new MlDamageSeverityResponse(0.50, "MODERATE",
-                    "fallback (file not found: " + resolved + ")");
+            throw new IllegalStateException(
+                    "Damage image not found at: " + resolved +
+                            ". Check storage.root-path and storedPath resolution.");
         }
 
         try {
@@ -140,32 +142,38 @@ public class MlServiceClient {
                     ? MediaType.IMAGE_PNG
                     : MediaType.IMAGE_JPEG;
 
-            org.springframework.util.MultiValueMap<String, Object> body = new org.springframework.util.LinkedMultiValueMap<>();
-            org.springframework.http.HttpHeaders partHeaders = new org.springframework.http.HttpHeaders();
-            partHeaders.setContentType(partType);
-            body.add("file", new org.springframework.http.HttpEntity<>(
-                    new org.springframework.core.io.FileSystemResource(resolved), partHeaders));
+            log.info("Sending multipart request to /ml/analyze-damage | File: {} | Size: {} bytes", 
+                    resolved.getFileName(), Files.size(resolved));
+            
+            MultipartBodyBuilder builder = new MultipartBodyBuilder();
+            builder.part("file", new org.springframework.core.io.FileSystemResource(resolved), partType);
 
-            MlDamageSeverityResponse response = RestClient.builder()
-                    .baseUrl(properties.getMlService().getBaseUrl())
-                    .build()
-                    .post()
+            MlDamageSeverityResponse response = createClient().post()
                     .uri("/ml/analyze-damage")
-                    .contentType(MediaType.MULTIPART_FORM_DATA)
-                    .body(body)
+                    .body(builder.build())
                     .retrieve()
                     .body(MlDamageSeverityResponse.class);
 
-            log.info("analyzeDamage: score={} label={}",
-                    response != null ? response.severityScore() : "null",
-                    response != null ? response.severityLabel() : "null");
+            log.info("analyzeDamage: Score={} Label={}",
+                    response.severityScore(),
+                    response.severityLabel());
             return response;
-
         } catch (Exception ex) {
-            log.warn("analyzeDamage: ML call failed ({}). Returning fallback 0.50.", ex.getMessage());
-            return new MlDamageSeverityResponse(0.50, "MODERATE",
-                    "fallback (error: " + ex.getMessage() + ")");
+            log.error("analyzeDamage failed for path '{}': {}", resolved, ex.getMessage());
+            throw new IllegalStateException("Damage severity inference failed: " + ex.getMessage(), ex);
         }
+    }
+
+    /**
+     * Internal REST client builder to ensure consistent configuration (converters, factories).
+     */
+    private RestClient createClient() {
+        org.springframework.http.client.SimpleClientHttpRequestFactory factory = new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        factory.setBufferRequestBody(true); // Force Content-Length instead of chunked encoding
+        return RestClient.builder()
+                .baseUrl(properties.getMlService().getBaseUrl())
+                .requestFactory(factory)
+                .build();
     }
 
     /**
@@ -196,19 +204,12 @@ public class MlServiceClient {
                     ? MediaType.IMAGE_PNG
                     : MediaType.IMAGE_JPEG;
 
-            org.springframework.util.MultiValueMap<String, Object> body = new org.springframework.util.LinkedMultiValueMap<>();
-            org.springframework.http.HttpHeaders partHeaders = new org.springframework.http.HttpHeaders();
-            partHeaders.setContentType(partType);
-            body.add("file", new org.springframework.http.HttpEntity<>(
-                    new org.springframework.core.io.FileSystemResource(resolved), partHeaders));
+            MultipartBodyBuilder builder = new MultipartBodyBuilder();
+            builder.part("file", new org.springframework.core.io.FileSystemResource(resolved), partType);
 
-            return RestClient.builder()
-                    .baseUrl(properties.getMlService().getBaseUrl())
-                    .build()
-                    .post()
+            return createClient().post()
                     .uri("/ml/part-damage-detection")
-                    .contentType(MediaType.MULTIPART_FORM_DATA)
-                    .body(body)
+                    .body(builder.build())
                     .retrieve()
                     .body(MlDamagePartsResponse.class);
 
@@ -222,14 +223,20 @@ public class MlServiceClient {
     // ── private helper ───────────────────────────────────────────────────────
 
     private <T> T post(String path, Map<String, Object> body, Class<T> type) {
-        return RestClient.builder()
-                .baseUrl(properties.getMlService().getBaseUrl())
-                .build()
-                .post()
-                .uri(path)
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(body)
-                .retrieve()
-                .body(type);
+        try {
+            byte[] bytes = objectMapper.writeValueAsBytes(body);
+            log.info("Sending POST request to {} | Body: {} | Length: {} bytes", path, body, bytes.length);
+            
+            return createClient().post()
+                    .uri(path)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .contentLength(bytes.length)
+                    .body(bytes)
+                    .retrieve()
+                    .body(type);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            log.error("Failed to serialize ML request body: {}", e.getMessage());
+            throw new RestClientException("JSON serialization failed", e);
+        }
     }
 }

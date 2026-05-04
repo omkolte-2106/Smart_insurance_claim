@@ -1,28 +1,37 @@
 # SmartInsure
-
+hello
 Production-style **vehicle-only** insurance claim platform: Spring Boot + JWT security, PostgreSQL, modular Python ML microservice, and a React dashboard tuned for modern insurtech UX.
 
 ## Architecture
 
 ```mermaid
-flowchart LR
-  subgraph Client
-    FE[React SPA]
-  end
-  subgraph Core
-    API[Spring Boot API]
-    DB[(PostgreSQL)]
-    FS[Local file storage abstraction]
-  end
-  subgraph Intelligence
-    ML[FastAPI ML service]
-    Models[(models/*.onnx / *.pkl)]
-  end
-  FE -->|HTTPS JSON + multipart| API
-  API --> DB
-  API --> FS
-  API -->|REST JSON| ML
-  ML --> Models
+graph TD
+    %% User Tier
+    User((Customer/Admin)) -->|Vite + React SPA| FE[Frontend Dashboard]
+    
+    %% API Tier
+    subgraph "Backend (Spring Boot 3.2 + Java 21)"
+        FE -->|REST + JWT Auth| Controller[Rest Controllers]
+        Controller -->|Service Layer| Claims[Claim Service]
+        Claims -->|Spring Data JPA| DB[(PostgreSQL 15)]
+        Claims -->|File System API| Storage[Local Disk Storage]
+    end
+
+    %% Intelligence Tier
+    subgraph "AI Microservice (FastAPI)"
+        Claims -->|Multipart Request via WebFlux| ML_API[ML Endpoints]
+        
+        subgraph "Inference Engine"
+            ML_API -->|MobileNetV2| SevModel[Damage Severity Logic]
+            ML_API -->|YOLOv8| PartModel[Part Detection Logic]
+            ML_API -->|Heuristics| FraudModel[Fraud Scoring]
+        end
+    end
+
+    %% Styling
+    style FE fill:#61dbfb,stroke:#333,stroke-width:2px
+    style DB fill:#336791,color:white,stroke-width:2px
+    style ML_API fill:#05998b,color:white,stroke-width:2px
 ```
 
 - **Backend** (`backend/`): layered packages (`controller`, `service`, `repository`, `entity`, `dto`, `security`, `ml`, `storage`, `config`, `exception`). JWT secures `/api/**` with role-based HTTP matchers.
@@ -141,7 +150,7 @@ cd ml-service
 python -m venv .venv
 .\.venv\Scripts\activate   # Windows
 pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8090
+uvicorn app.main:app --reload --port 8000
 ```
 
 Set `smartinsure.ml-service.enabled=false` in `application.yml` to force deterministic placeholders without Python.
@@ -153,7 +162,7 @@ cd backend
 mvn spring-boot:run
 ```
 
-Requires **Java 17** + **Maven** on `PATH`. The `dev` profile (default) seeds demo users:
+Requires **Java 21** + **Maven** on `PATH`. The project uses `spring-boot-starter-webflux` to handle high-performance binary transfers (AI images) to the microservice. The `dev` profile (default) seeds demo users:
 
 | Email | Password | Role |
 | --- | --- | --- |
@@ -183,9 +192,10 @@ Visit `http://localhost:5173`. The dev server proxies `/api` to Spring.
 
 1. Customer hits `submit-ai`.  
 2. `ClaimService.runAiPipeline` builds lightweight JSON payloads (claim ids, counts, sum insured).  
-3. `MlServiceClient` posts to `/ml/document-verification`, `/ml/fraud-detection`, `/ml/damage-severity`, `/ml/payout-estimation`.  
-4. Responses are persisted as `VerificationResult` rows for traceability.  
-5. When Python is offline, the client logs a warning and uses safe fallbacks so demos keep working.
+3. `MlServiceClient` posts to `/ml/document-verification`, `/ml/fraud-detection`, `/ml/analyze-damage`, `/ml/payout-estimation`.  
+4. **Resilient Communication**: The client uses `SimpleClientHttpRequestFactory` for high stability with Uvicorn and `MultipartBodyBuilder` for robust binary image streaming.
+5. Responses are persisted as `VerificationResult` rows for traceability.  
+6. When Python is offline, the client logs a warning and uses safe fallbacks so demos keep working.
 
 ## Hardening checklist for real deployments
 

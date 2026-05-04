@@ -34,6 +34,9 @@ export const CompanyDashboard = () => {
   const [reviewRemarks, setReviewRemarks] = useState("");
   const [reviewLoading, setReviewLoading] = useState(false);
 
+  const [dateFilter, setDateFilter] = useState({ start: "", end: "" });
+  const [filteredClaims, setFilteredClaims] = useState<any[]>([]);
+
   const downloadCsv = async (prefill: boolean) => {
     try {
       const res = await api.get(`/company/policies/csv-template?prefill=${prefill}`, { responseType: 'blob' });
@@ -86,11 +89,27 @@ export const CompanyDashboard = () => {
 
   useEffect(() => {
     (async () => {
-      const [d, c] = await Promise.all([api.get("/company/dashboard"), api.get("/claims?size=8")]);
+      const [d, c] = await Promise.all([api.get("/company/dashboard"), api.get("/claims?size=20&sort=createdAt,desc")]);
       setDash(d.data);
-      setClaims(c.data.content ?? c.data);
+      const allClaims = c.data.content ?? c.data;
+      setClaims(allClaims);
+      setFilteredClaims(allClaims);
     })().catch(() => {});
   }, []);
+
+  useEffect(() => {
+    let result = [...claims];
+    if (dateFilter.start) {
+      result = result.filter(c => new Date(c.createdAt) >= new Date(dateFilter.start));
+    }
+    if (dateFilter.end) {
+      // Add 23:59:59 to include the entire end day
+      const end = new Date(dateFilter.end);
+      end.setHours(23, 59, 59, 999);
+      result = result.filter(c => new Date(c.createdAt) <= end);
+    }
+    setFilteredClaims(result);
+  }, [dateFilter, claims]);
 
   const nav = [
     { to: "/company", label: "Overview", icon: LayoutDashboard },
@@ -254,71 +273,118 @@ export const CompanyDashboard = () => {
             <div className="text-sm font-semibold text-ink-950">Recent claims</div>
             <div className="text-xs text-ink-500">Latest submissions from your policyholders</div>
           </div>
-            <div className="flex items-center gap-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 bg-white">
+                <span className="text-[10px] font-bold text-ink-400 uppercase">From</span>
+                <input 
+                  type="date" 
+                  className="bg-transparent border-0 text-[10px] focus:ring-0 p-0" 
+                  value={dateFilter.start}
+                  onChange={e => setDateFilter({...dateFilter, start: e.target.value})}
+                />
+              </div>
+              <div className="flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 bg-white">
+                <span className="text-[10px] font-bold text-ink-400 uppercase">To</span>
+                <input 
+                  type="date" 
+                  className="bg-transparent border-0 text-[10px] focus:ring-0 p-0" 
+                  value={dateFilter.end}
+                  onChange={e => setDateFilter({...dateFilter, end: e.target.value})}
+                />
+              </div>
               {claims?.length > 0 && (
-                <button onClick={() => setClaims([])} className="text-[10px] font-bold text-ink-400 hover:text-ink-600 transition-colors uppercase tracking-wider">
-                  Clear list
+                <button onClick={() => setClaims([])} className="text-[10px] font-bold text-ink-400 hover:text-ink-600 transition-colors uppercase tracking-wider ml-2">
+                  Clear
                 </button>
               )}
-              <Link to="/search" className="si-btn-secondary px-4 py-2 text-xs">
-                <Search className="h-4 w-4" />
-                Search vehicle
+              <Link to="/search" className="si-btn-secondary px-3 py-1.5 text-xs ml-2">
+                <Search className="h-3.5 w-3.5 mr-1" />
+                Search
               </Link>
             </div>
           </div>
         <div className="mt-5 divide-y divide-slate-100">
-          {claims?.length ? (
-            claims.map((cl) => (
-              <div key={cl.claimPublicId} className="flex flex-wrap items-center justify-between gap-3 py-4">
-                <div>
-                  <div className="font-semibold text-ink-950">{cl.claimPublicId}</div>
-                  <div className="text-xs text-ink-500">{cl.policyNumber}</div>
+          {filteredClaims?.length ? (
+            filteredClaims.map((cl, idx) => {
+              const isRecent = idx === 0 && !dateFilter.start && !dateFilter.end;
+              return (
+                <div key={cl.claimPublicId} className={`flex flex-wrap items-center justify-between gap-3 py-4 ${isRecent ? "bg-brand-50/30 -mx-6 px-6 border-y border-brand-100/50" : ""}`}>
+                  <div className="flex items-center gap-4">
+                    <div className={`p-2 rounded-lg ${isRecent ? "bg-brand-100 text-brand-700" : "bg-slate-50 text-slate-400"}`}>
+                      <ClipboardList className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <div className="font-bold text-ink-950">{cl.claimPublicId}</div>
+                        {isRecent && <span className="text-[8px] bg-brand-600 text-white px-1.5 py-0.5 rounded-full font-black uppercase tracking-tighter">Latest</span>}
+                      </div>
+                      <div className="text-[11px] font-medium text-ink-700 flex items-center gap-1">
+                        <UserCircle className="h-3 w-3 inline" /> {cl.customerName || "Unknown Customer"}
+                      </div>
+                      <div className="text-[10px] text-ink-500 font-medium">Policy: {cl.policyNumber} • {new Date(cl.createdAt).toLocaleDateString()}</div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <span className={`rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-wide ring-1 ${
+                      cl.status === 'SETTLED' ? 'bg-green-50 text-green-700 ring-green-200' :
+                      cl.status === 'APPROVED' ? 'bg-brand-50 text-brand-700 ring-brand-200' :
+                      cl.status === 'REJECTED' ? 'bg-red-50 text-red-700 ring-red-200' :
+                      'bg-slate-50 text-ink-700 ring-slate-200/70'
+                    }`}>
+                      {cl.status?.replace(/_/g, " ")}
+                    </span>
+                    {(cl.status === "MANUAL_REVIEW_PENDING" || cl.status === "FRAUD_FLAGGED" || cl.status === "AI_VERIFIED" || cl.status === "DOCUMENTS_UPLOADED") && (
+                      <button 
+                        onClick={() => setSelectedClaim(cl)}
+                        className="si-btn-primary px-4 py-1.5 text-[11px]"
+                      >
+                        Review
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <div className="flex items-center gap-4">
-                  <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-ink-700 ring-1 ring-slate-200/70">
-                    {cl.status?.replace(/_/g, " ")}
-                  </span>
-                  {(cl.status === "MANUAL_REVIEW_PENDING" || cl.status === "FRAUD_FLAGGED" || cl.status === "AI_VERIFIED") && (
-                    <button 
-                      onClick={() => setSelectedClaim(cl)}
-                      className="si-btn-primary px-3 py-1 text-[10px]"
-                    >
-                      Review
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))
+              );
+            })
           ) : (
-            <div className="py-10 text-center text-sm text-ink-500">No claims yet.</div>
+            <div className="py-12 text-center">
+              <div className="text-sm text-ink-500">No claims matching your filter.</div>
+              {(dateFilter.start || dateFilter.end) && (
+                <button onClick={() => setDateFilter({start:"", end:""})} className="mt-2 text-xs text-brand-600 font-bold hover:underline">
+                  Clear Filters
+                </button>
+              )}
+            </div>
           )}
         </div>
       </Card>
 
       <Card className="mt-8 p-6">
         <div className="mb-4">
-          <div className="text-sm font-semibold text-ink-950">Customer Churn Prediction</div>
-          <div className="text-xs text-ink-500">Upload a CSV to identify the top 10% customers likely to cancel their policy. Expected columns: INCOME, HAS_CHILDREN, LENGTH_OF_RESIDENCE, MARITAL_STATUS, HOME_MARKET_VALUE, HOME_OWNER, COLLEGE_DEGREE</div>
+          <div className="text-sm font-semibold text-ink-950">Renewal Intelligence</div>
+          <div className="text-xs text-ink-500">Scan demographics to find your top 10% customers for renewal.</div>
         </div>
         <div className="flex items-center gap-4 mb-6">
           <input 
             type="file" 
             accept=".csv" 
             onChange={(e) => setChurnFile(e.target.files?.[0] || null)} 
-            className="text-sm text-ink-700 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-brand-50 file:text-brand-700 hover:file:bg-brand-100"
+            className="text-xs text-ink-700 file:mr-4 file:py-1.5 file:px-4 file:rounded-lg file:border-0 file:text-[10px] file:font-bold file:bg-slate-100 file:text-ink-700 hover:file:bg-slate-200 transition-all cursor-pointer"
           />
           <button 
             disabled={!churnFile || churnLoading}
             onClick={handleChurnUpload}
-            className="si-btn-primary px-4 py-2 text-sm disabled:opacity-50"
+            className="si-btn-primary px-5 py-2 text-xs disabled:opacity-50 shadow-sm"
           >
-            {churnLoading ? "Analyzing..." : "Predict Churn"}
+            {churnLoading ? "Analyzing..." : "Analyze Batch"}
           </button>
         </div>
 
         {churnResults.length > 0 && (
           <div className="mt-6 border-t border-slate-100 pt-6">
-            <h4 className="text-sm font-semibold text-ink-950 mb-4">Top 10% At-Risk Customers (Out of {churnAnalyzed})</h4>
+            <div className="flex items-center justify-between mb-4">
+              <h4 className="text-sm font-semibold text-ink-950">Renewal Recommendations</h4>
+              <span className="text-[10px] font-bold text-brand-600 bg-brand-50 px-2 py-0.5 rounded-full uppercase tracking-wider">Top 10% Identified</span>
+            </div>
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm text-ink-700">
                 <thead className="bg-slate-50 text-xs uppercase text-ink-500">
@@ -327,7 +393,7 @@ export const CompanyDashboard = () => {
                     <th className="px-4 py-3">Residence</th>
                     <th className="px-4 py-3">Marital Status</th>
                     <th className="px-4 py-3">Home Owner</th>
-                    <th className="px-4 py-3 text-right">Probability</th>
+                    <th className="px-4 py-3 text-right">Priority Score</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
