@@ -11,7 +11,11 @@ import com.smartinsure.service.ProfileService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+import com.smartinsure.service.EstimateService;
+import com.smartinsure.dto.customer.EstimateDamageResponse;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 
@@ -25,6 +29,7 @@ public class CustomerController {
     private final InsurancePolicyRepository insurancePolicyRepository;
     private final DiscountService discountService;
     private final ProfileService profileService;
+    private final EstimateService estimateService;
 
     @GetMapping("/me")
     public Map<String, Object> me() {
@@ -58,5 +63,11 @@ public class CustomerController {
                         "campaignCode", d.getCampaignCode()
                 ))
                 .orElse(Map.of("eligible", false));
+    }
+
+    @PostMapping("/estimate-damage")
+    public EstimateDamageResponse estimateDamage(
+            @RequestParam("files") MultipartFile[] files) {
+        return estimateService.estimateDamage(files);
     }
 }

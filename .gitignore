@@ -29,3 +29,4 @@ scratch_*.ps1
 repro_*.js
 DBCheck.java
 db_check.py
+scratch/

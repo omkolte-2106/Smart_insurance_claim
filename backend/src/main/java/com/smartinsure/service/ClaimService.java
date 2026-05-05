@@ -207,9 +207,19 @@ public class ClaimService {
             claim.setDamagedParts(String.join(",", partsResp.detectedParts()));
         }
 
+        // --- HEURISTIC OVERRIDE ---
+        // If the MobileNet model underestimates severity, we use the YOLO parts detection as a multiplier. 
+        // Each unique damaged part adds +15% to the severity.
+        double finalSeverity = damageResp.severityScore();
+        if (partsResp.detectedParts() != null && !partsResp.detectedParts().isEmpty()) {
+            double partBoost = partsResp.detectedParts().size() * 0.15;
+            finalSeverity = Math.min(finalSeverity + partBoost, 0.95);
+            claim.setDamageSeverityScore(finalSeverity);
+        }
+
         Map<String, Object> payoutPayload = Map.of(
                 "claimPublicId", claim.getClaimPublicId(),
-                "severity", damageResp.severityScore(),
+                "severity", finalSeverity,
                 "sumInsured", claim.getPolicy().getSumInsured());
         MlPayoutEstimateResponse payoutResp = mlServiceClient.estimatePayout(payoutPayload);
         persistVerification(claim, MODULE_PAYOUT, payoutResp);

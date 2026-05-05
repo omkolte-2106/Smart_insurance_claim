@@ -142,8 +142,8 @@ export const ClaimTrackingPage = () => {
                   </dd>
                 </div>
                 <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200/70 bg-slate-50/50 px-3 py-2">
-                  <dt className="text-ink-500">Damage severity</dt>
-                  <dd className="font-semibold text-ink-950">{claim.damageSeverityScore != null ? claim.damageSeverityScore.toFixed(2) : "—"}</dd>
+                  <dt className="text-ink-500">Damage severity score</dt>
+                  <dd className="font-semibold text-ink-950">{claim.damageSeverityScore != null ? (claim.damageSeverityScore * 100).toFixed(1) + "%" : "—"}</dd>
                 </div>
                 <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200/70 bg-slate-50/50 px-3 py-2">
                   <dt className="text-ink-500">Estimated payout</dt>

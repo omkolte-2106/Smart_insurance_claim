@@ -35,6 +35,7 @@ export const CustomerDashboard = () => {
   const nav = [
     { to: "/customer", label: "Home", icon: Home },
     { to: "/claims/new", label: "File claim", icon: FilePlus2 },
+    { to: "/customer/estimator", label: "Estimator", icon: ShieldCheck },
     { to: "/profile", label: "Account", icon: UserCircle },
   ];
 
@@ -66,6 +67,20 @@ export const CustomerDashboard = () => {
           </div>
         </div>
       )}
+
+      <div className="mt-8 grid gap-6 lg:grid-cols-2">
+        <Card className="p-6 bg-gradient-to-br from-blue-50 to-white border-blue-100">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-lg font-bold text-blue-900">AI Damage Estimator</div>
+              <div className="text-sm text-blue-700 mt-1">Upload vehicle photos to get an instant, commitment-free repair estimate.</div>
+            </div>
+            <Link to="/customer/estimator" className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md font-medium text-sm whitespace-nowrap transition-colors">
+              Get Estimate
+            </Link>
+          </div>
+        </Card>
+      </div>
 
       <div className="mt-8 grid gap-6 lg:grid-cols-3">
         <Card className="p-6">

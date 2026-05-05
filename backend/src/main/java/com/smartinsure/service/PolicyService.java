@@ -120,8 +120,8 @@ public class PolicyService {
                     req.setPolicyNumber(parts.length > 2 ? parts[2].trim() : "POL-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase());
                     req.setSumInsured(parts.length > 3 ? new BigDecimal(parts[3].trim()) : BigDecimal.ZERO);
                     req.setAnnualPremium(parts.length > 4 ? new BigDecimal(parts[4].trim()) : BigDecimal.ZERO);
-                    req.setStartDate(parts.length > 5 ? LocalDate.parse(parts[5].trim()) : LocalDate.now());
-                    req.setEndDate(parts.length > 6 ? LocalDate.parse(parts[6].trim()) : LocalDate.now().plusYears(1));
+                    req.setStartDate(parts.length > 5 ? parseDate(parts[5]) : LocalDate.now());
+                    req.setEndDate(parts.length > 6 ? parseDate(parts[6]) : LocalDate.now().plusYears(1));
 
                     // We wrap the individual call to handle exceptions per row
                     issueSinglePolicy(user, company, req);
@@ -129,7 +129,8 @@ public class PolicyService {
                 } catch (Exception e) {
                     log.error("Failed to process bulk policy row: {}", line, e);
                     response.setFailureCount(response.getFailureCount() + 1);
-                    response.getErrors().add("Row " + line + ": " + (e instanceof ApiException ? e.getMessage() : "Internal error"));
+                    String errorMsg = e instanceof ApiException ? e.getMessage() : (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+                    response.getErrors().add("Row " + line + ": " + errorMsg);
                 }
             }
         } catch (Exception e) {
@@ -161,5 +162,33 @@ public class PolicyService {
         }
         
         return csv.toString();
+    }
+
+    private LocalDate parseDate(String dateStr) {
+        if (dateStr == null || dateStr.trim().isEmpty()) {
+            return LocalDate.now();
+        }
+        dateStr = dateStr.trim();
+        String[] formats = {
+                "yyyy-MM-dd",
+                "M/d/yyyy",
+                "d/M/yyyy",
+                "MM/dd/yyyy",
+                "dd/MM/yyyy",
+                "dd-MM-yyyy"
+        };
+        for (String format : formats) {
+            try {
+                return LocalDate.parse(dateStr, java.time.format.DateTimeFormatter.ofPattern(format));
+            } catch (java.time.format.DateTimeParseException e) {
+                // ignore and try next format
+            }
+        }
+        try {
+            return LocalDate.parse(dateStr);
+        } catch (Exception e) {
+            log.warn("Could not parse date {}, defaulting to now", dateStr);
+            return LocalDate.now();
+        }
     }
 }

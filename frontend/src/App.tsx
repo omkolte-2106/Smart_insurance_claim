@@ -14,6 +14,7 @@ import { FraudReviewPage } from "./pages/FraudReviewPage";
 import { SearchPage } from "./pages/SearchPage";
 import { DiscountAnalyticsPage } from "./pages/DiscountAnalyticsPage";
 import { ProfilePage } from "./pages/ProfilePage";
+import { DamageEstimatorPage } from "./pages/customer/DamageEstimatorPage";
 
 const Protected: React.FC<{ role: string; children: React.ReactElement }> = ({ role, children }) => {
   const { token, role: r } = useAuth();
@@ -59,6 +60,14 @@ const App = () => {
         element={
           <Protected role="ROLE_CUSTOMER">
             <CustomerDashboard />
+          </Protected>
+        }
+      />
+      <Route
+        path="/customer/estimator"
+        element={
+          <Protected role="ROLE_CUSTOMER">
+            <DamageEstimatorPage />
           </Protected>
         }
       />
