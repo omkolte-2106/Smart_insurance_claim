@@ -21,6 +21,8 @@ public class ClaimSummaryDto {
     boolean fraudFlagged;
     String companyName;
     String customerName;
+    String customerEmail;
+    String customerPhone;
     String policyNumber;
     String vehicleRegistration;
     Instant createdAt;

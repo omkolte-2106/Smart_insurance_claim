@@ -174,19 +174,26 @@ def preprocess_image(image_bytes: bytes, target_size=(224, 224)) -> np.ndarray:
 
 # ── Payout helper (BUG 4 FIX) ─────────────────────────────────────────────────
 
-def compute_payout(severity_score: float, sum_insured: float) -> float:
-    """
-    Graduated payout multiplier so different severities produce different amounts.
-    """
-    if severity_score >= 0.60:
-        multiplier = 0.45 + 0.30 * ((severity_score - 0.60) / 0.40)
-    elif severity_score >= 0.30:
-        multiplier = 0.20 + 0.25 * ((severity_score - 0.30) / 0.30)
-    else:
-        multiplier = 0.10 + 0.10 * (severity_score / 0.30)
+def calculate_payout(idv, damage_score, vehicle_age_years,
+                     repair_cost=None, deductible_percent=0.05):
+    # Step 1: Depreciation from IRDAI table
+    if vehicle_age_years < 0.5:      depreciation = 0.05
+    elif vehicle_age_years < 1:      depreciation = 0.15
+    elif vehicle_age_years < 2:      depreciation = 0.20
+    elif vehicle_age_years < 3:      depreciation = 0.30
+    elif vehicle_age_years < 4:      depreciation = 0.40
+    elif vehicle_age_years < 5:      depreciation = 0.50
+    else:                            depreciation = 0.70
 
-    multiplier = min(multiplier, 0.90)
-    return round(sum_insured * multiplier, 2)
+    # Step 2: Check for total loss
+    if repair_cost and repair_cost > 0.75 * idv:
+        salvage_value = idv * 0.10     # ~10% salvage
+        payout = idv - salvage_value - (idv * deductible_percent)
+        return round(payout, 2), "TOTAL_LOSS"
+
+    # Step 3: IDV-based partial damage payout
+    payout = idv * damage_score * (1 - depreciation) * (1 - deductible_percent)
+    return round(payout, 2), "PARTIAL_DAMAGE"
 
 
 # ── Pydantic models ────────────────────────────────────────────────────────────
@@ -210,6 +217,8 @@ class PayoutPayload(BaseModel):
     claimPublicId: str
     severity: float
     sumInsured: float
+    vehicleAgeYears: float = 3.0  # Default to 3 years if not provided by backend
+    repairCost: Optional[float] = None
 
 class CustomerRankingPayload(BaseModel):
     topFraction: float = Field(default=0.15, ge=0.01, le=0.5)
@@ -370,20 +379,33 @@ async def part_damage_detection(file: UploadFile = File(...)):
 
 @app.post("/ml/payout-estimation")
 def payout_estimation(payload: PayoutPayload):
-    recommended = compute_payout(payload.severity, float(payload.sumInsured))
+    recommended, status_type = calculate_payout(
+        idv=float(payload.sumInsured),
+        damage_score=payload.severity,
+        vehicle_age_years=payload.vehicleAgeYears,
+        repair_cost=payload.repairCost
+    )
 
-    if payload.severity >= 0.60:
-        rationale = "SEVERE damage — high-tier payout (45–75 % of sum insured)"
-    elif payload.severity >= 0.30:
-        rationale = "MODERATE damage — mid-tier payout (20–45 % of sum insured)"
+    if status_type == "TOTAL_LOSS":
+        rationale = "SEVERE damage - Total Loss based on high repair cost vs IDV"
     else:
-        rationale = "MINOR damage — low-tier payout (10–20 % of sum insured)"
+        if payload.severity >= 0.60:
+            rationale = "SEVERE damage — partial damage payout adjusted for IRDAI depreciation"
+        elif payload.severity >= 0.30:
+            rationale = "MODERATE damage — partial damage payout adjusted for IRDAI depreciation"
+        else:
+            rationale = "MINOR damage — partial damage payout adjusted for IRDAI depreciation"
 
-    logger.info("Payout: severity=%.4f  sumInsured=%.2f → recommended=%.2f",
-                payload.severity, float(payload.sumInsured), recommended)
+    min_payout = round(recommended * 0.8, 2)
+    max_payout = round(recommended * 1.3, 2)
+
+    logger.info("Payout: severity=%.4f  sumInsured=%.2f → recommended=%.2f (range: %.2f - %.2f)",
+                payload.severity, float(payload.sumInsured), recommended, min_payout, max_payout)
 
     return {
         "recommendedPayout": recommended,
+        "minPayout":         min_payout,
+        "maxPayout":         max_payout,
         "currency":          "INR",
         "rationale":         rationale,
     }

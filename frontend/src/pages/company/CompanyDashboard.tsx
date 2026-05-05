@@ -62,6 +62,22 @@ export const CompanyDashboard = () => {
     endDate: new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toISOString().split('T')[0],
   });
 
+  const handleLookupVehicle = async (regNumber: string) => {
+    if (!regNumber) return;
+    try {
+      const res = await api.get(`/lookup/vehicle?regNumber=${regNumber}`);
+      if (res.data) {
+        setNewPolicy(prev => ({
+          ...prev,
+          customerEmail: res.data.email || prev.customerEmail,
+          policyNumber: res.data.policyNumber || prev.policyNumber
+        }));
+      }
+    } catch (e) {
+      // Ignore 404s
+    }
+  };
+
   const handleChurnUpload = async () => {
     if (!churnFile) return;
     setChurnLoading(true);
@@ -170,7 +186,13 @@ export const CompanyDashboard = () => {
           <div className="mt-4 space-y-3 rounded-xl bg-slate-50 p-4 border border-slate-200">
             <div className="grid grid-cols-2 gap-2">
               <input className="si-input text-xs" placeholder="Customer Email" value={newPolicy.customerEmail} onChange={e => setNewPolicy({...newPolicy, customerEmail: e.target.value})} />
-              <input className="si-input text-xs" placeholder="Vehicle Reg (e.g. MH01AB1234)" value={newPolicy.vehicleRegistration} onChange={e => setNewPolicy({...newPolicy, vehicleRegistration: e.target.value})} />
+              <input 
+                className="si-input text-xs" 
+                placeholder="Vehicle Reg (e.g. MH01AB1234)" 
+                value={newPolicy.vehicleRegistration} 
+                onChange={e => setNewPolicy({...newPolicy, vehicleRegistration: e.target.value})} 
+                onBlur={e => handleLookupVehicle(e.target.value)}
+              />
             </div>
             <div className="grid grid-cols-3 gap-2">
               <input className="si-input text-xs" placeholder="Policy Num" value={newPolicy.policyNumber} onChange={e => setNewPolicy({...newPolicy, policyNumber: e.target.value})} />
@@ -353,6 +375,54 @@ export const CompanyDashboard = () => {
                   Clear Filters
                 </button>
               )}
+            </div>
+          )}
+        </div>
+      </Card>
+
+      <Card className="mt-8 p-6">
+        <div className="mb-6">
+          <div className="text-sm font-semibold text-ink-950">Approved Claim Settlements</div>
+          <div className="text-xs text-ink-500">Contact details for settled and approved policyholders for payout processing.</div>
+        </div>
+        <div className="mt-5 divide-y divide-slate-100">
+          {claims?.filter(cl => cl.status === 'APPROVED' || cl.status === 'SETTLED').length > 0 ? (
+            claims.filter(cl => cl.status === 'APPROVED' || cl.status === 'SETTLED').map((cl) => (
+              <div key={cl.claimPublicId} className="flex flex-wrap items-center justify-between gap-3 py-4">
+                <div className="flex items-center gap-4">
+                  <div className="p-2 rounded-lg bg-green-50 text-green-600">
+                    <CheckCircle className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <div className="font-bold text-ink-950">{cl.customerName || "Unknown Customer"}</div>
+                    <div className="text-[10px] text-ink-500 font-medium">Claim: {cl.claimPublicId} • Policy: {cl.policyNumber}</div>
+                    <div className="mt-1 flex items-center gap-3">
+                      <div className="text-[10px] text-ink-600 flex items-center gap-1 font-semibold">
+                        <MessageSquare className="h-3 w-3" /> {cl.customerEmail || "No email recorded"}
+                      </div>
+                      {cl.customerPhone && (
+                        <div className="text-[10px] text-ink-600 flex items-center gap-1 font-semibold">
+                          <ExternalLink className="h-3 w-3 rotate-45" /> {cl.customerPhone}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <a href={`mailto:${cl.customerEmail}`} className="si-btn-secondary px-3 py-1.5 text-[10px] flex items-center gap-1">
+                    <MessageSquare className="h-3 w-3" /> Email
+                  </a>
+                  {cl.customerPhone && (
+                    <a href={`tel:${cl.customerPhone}`} className="si-btn-secondary px-3 py-1.5 text-[10px] flex items-center gap-1">
+                      <ExternalLink className="h-3 w-3 rotate-45" /> Call
+                    </a>
+                  )}
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="py-8 text-center">
+              <div className="text-sm text-ink-400">No approved or settled claims found in the current list.</div>
             </div>
           )}
         </div>

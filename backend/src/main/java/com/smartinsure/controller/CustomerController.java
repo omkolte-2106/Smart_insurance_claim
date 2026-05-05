@@ -67,7 +67,8 @@ public class CustomerController {
 
     @PostMapping("/estimate-damage")
     public EstimateDamageResponse estimateDamage(
-            @RequestParam("files") MultipartFile[] files) {
-        return estimateService.estimateDamage(files);
+            @RequestParam("files") MultipartFile[] files,
+            @RequestParam(value = "vehicleAge", required = false, defaultValue = "3.0") Double vehicleAge) {
+        return estimateService.estimateDamage(files, vehicleAge);
     }
 }

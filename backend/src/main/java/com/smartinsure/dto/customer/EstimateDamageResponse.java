@@ -16,6 +16,8 @@ public class EstimateDamageResponse {
     private double averageSeverityScore;
     private String overallSeverityLabel;
     private BigDecimal estimatedPrice;
+    private BigDecimal minPrice;
+    private BigDecimal maxPrice;
     private String currency;
     private List<String> overallDetectedParts;
     private List<FileEstimateDto> details;

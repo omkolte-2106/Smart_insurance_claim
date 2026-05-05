@@ -28,7 +28,7 @@ public class EstimateService {
 
     private final MlServiceClient mlServiceClient;
 
-    public EstimateDamageResponse estimateDamage(MultipartFile[] files) {
+    public EstimateDamageResponse estimateDamage(MultipartFile[] files, Double vehicleAge) {
         List<FileEstimateDto> details = new ArrayList<>();
         Set<String> allDetectedParts = new HashSet<>();
         double totalScore = 0;
@@ -93,16 +93,21 @@ public class EstimateService {
         }
 
         BigDecimal estimatedPrice = BigDecimal.ZERO;
+        BigDecimal minPrice = BigDecimal.ZERO;
+        BigDecimal maxPrice = BigDecimal.ZERO;
         String currency = "INR";
 
         if (validFiles > 0) {
             Map<String, Object> payload = Map.of(
                     "claimPublicId", "ESTIMATE_ONLY",
                     "severity", averageScore,
-                    "sumInsured", new BigDecimal("500000")
+                    "sumInsured", new BigDecimal("500000"),
+                    "vehicleAgeYears", vehicleAge != null ? vehicleAge : 3.0
             );
             MlPayoutEstimateResponse payoutResp = mlServiceClient.estimatePayout(payload);
             estimatedPrice = payoutResp.recommendedPayout();
+            minPrice = payoutResp.minPayout();
+            maxPrice = payoutResp.maxPayout();
             currency = payoutResp.currency();
         }
 
@@ -110,6 +115,8 @@ public class EstimateService {
                 .averageSeverityScore(averageScore)
                 .overallSeverityLabel(overallLabel)
                 .estimatedPrice(estimatedPrice)
+                .minPrice(minPrice)
+                .maxPrice(maxPrice)
                 .currency(currency)
                 .overallDetectedParts(new ArrayList<>(allDetectedParts))
                 .details(details)

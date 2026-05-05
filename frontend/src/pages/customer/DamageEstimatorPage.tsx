@@ -13,6 +13,8 @@ interface EstimateResponse {
   averageSeverityScore: number;
   overallSeverityLabel: string;
   estimatedPrice: number;
+  minPrice: number;
+  maxPrice: number;
   currency: string;
   overallDetectedParts: string[];
   details: FileEstimate[];
@@ -20,6 +22,7 @@ interface EstimateResponse {
 
 export const DamageEstimatorPage: React.FC = () => {
   const [files, setFiles] = useState<FileList | null>(null);
+  const [vehicleAge, setVehicleAge] = useState<number>(3);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<EstimateResponse | null>(null);
@@ -61,6 +64,7 @@ export const DamageEstimatorPage: React.FC = () => {
       Array.from(files).forEach((file) => {
         formData.append("files", file);
       });
+      formData.append("vehicleAge", vehicleAge.toString());
 
       const res = await api.post("/customer/estimate-damage", formData, {
         headers: { "Content-Type": "multipart/form-data" },
@@ -141,6 +145,24 @@ export const DamageEstimatorPage: React.FC = () => {
                   </div>
                 )}
 
+                <div className="space-y-1">
+                  <label className="text-sm font-semibold text-slate-700">Vehicle Age (Years)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="50"
+                    step="0.5"
+                    value={vehicleAge}
+                    onChange={(e) => setVehicleAge(Number(e.target.value))}
+                    className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none text-slate-700 font-medium"
+                    placeholder="e.g. 2.5"
+                  />
+                  <p className="text-xs text-slate-500 mt-1 flex items-center">
+                    <Info className="w-3 h-3 mr-1" />
+                    Used to calculate exact IRDAI depreciation for realistic estimates.
+                  </p>
+                </div>
+
                 <button
                   type="submit"
                   disabled={loading}
@@ -184,10 +206,11 @@ export const DamageEstimatorPage: React.FC = () => {
                     <div className="absolute top-0 right-0 p-4 opacity-10">
                       <svg className="w-16 h-16 text-indigo-900" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
                     </div>
-                    <p className="text-sm font-semibold text-indigo-800/70 uppercase tracking-wider mb-1">Estimated Payout</p>
-                    <p className="text-4xl font-black text-indigo-950">
-                      {result.currency} {result.estimatedPrice.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                    <p className="text-sm font-semibold text-indigo-800/70 uppercase tracking-wider mb-1">Estimated Payout Range</p>
+                    <p className="text-2xl font-black text-indigo-950">
+                      {result.currency} {result.minPrice?.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })} - {result.maxPrice?.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                     </p>
+                    <p className="text-xs text-indigo-600/70 mt-2 font-medium italic">* Final payout depends on physical verification and surveyor report.</p>
                   </div>
 
                   <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 flex flex-col justify-center">

@@ -15,6 +15,23 @@ export const CustomerDashboard = () => {
   const [showVehicleForm, setShowVehicleForm] = useState(false);
   const [newVehicle, setNewVehicle] = useState({ registrationNumber: "", make: "", model: "", yearOfManufacture: 2024 });
 
+  const handleLookupVehicle = async (regNumber: string) => {
+    if (!regNumber) return;
+    try {
+      const res = await api.get(`/lookup/vehicle?regNumber=${regNumber}`);
+      if (res.data) {
+        setNewVehicle(prev => ({
+          ...prev,
+          make: res.data.make || prev.make,
+          model: res.data.model || prev.model,
+          yearOfManufacture: res.data.yearOfManufacture || prev.yearOfManufacture
+        }));
+      }
+    } catch (e) {
+      // Ignore 404s
+    }
+  };
+
   useEffect(() => {
     (async () => {
       const [p, c, d, v] = await Promise.all([
@@ -117,7 +134,13 @@ export const CustomerDashboard = () => {
           </div>
           {showVehicleForm && (
             <div className="mt-4 space-y-3 rounded-xl bg-slate-50 p-4 border border-slate-200">
-              <input className="si-input text-xs" placeholder="Registration (e.g. MH01AB1234)" value={newVehicle.registrationNumber} onChange={e => setNewVehicle({...newVehicle, registrationNumber: e.target.value})} />
+              <input 
+                className="si-input text-xs" 
+                placeholder="Registration (e.g. MH01AB1234)" 
+                value={newVehicle.registrationNumber} 
+                onChange={e => setNewVehicle({...newVehicle, registrationNumber: e.target.value})} 
+                onBlur={e => handleLookupVehicle(e.target.value)}
+              />
               <div className="grid grid-cols-2 gap-2">
                 <input className="si-input text-xs" placeholder="Make" value={newVehicle.make} onChange={e => setNewVehicle({...newVehicle, make: e.target.value})} />
                 <input className="si-input text-xs" placeholder="Model" value={newVehicle.model} onChange={e => setNewVehicle({...newVehicle, model: e.target.value})} />

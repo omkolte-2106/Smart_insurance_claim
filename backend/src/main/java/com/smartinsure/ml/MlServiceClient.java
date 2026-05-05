@@ -84,13 +84,13 @@ public class MlServiceClient {
 
     public MlPayoutEstimateResponse estimatePayout(Map<String, Object> payload) {
         if (!properties.getMlService().isEnabled()) {
-            return new MlPayoutEstimateResponse(BigDecimal.valueOf(75000), "INR", "placeholder");
+            return new MlPayoutEstimateResponse(BigDecimal.valueOf(75000), BigDecimal.valueOf(60000), BigDecimal.valueOf(95000), "INR", "placeholder");
         }
         try {
             return post("/ml/payout-estimation", payload, MlPayoutEstimateResponse.class);
         } catch (RestClientException ex) {
             log.warn("ML payout estimation fallback: {}", ex.getMessage());
-            return new MlPayoutEstimateResponse(BigDecimal.valueOf(65000), "INR", "Fallback – ML unreachable");
+            return new MlPayoutEstimateResponse(BigDecimal.valueOf(65000), BigDecimal.valueOf(55000), BigDecimal.valueOf(80000), "INR", "Fallback – ML unreachable");
         }
     }
 

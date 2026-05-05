@@ -447,6 +447,8 @@ public class ClaimService {
                 .fraudFlagged(claim.isFraudFlagged())
                 .companyName(claim.getCompany().getLegalName())
                 .customerName(claim.getCustomer().getFullName())
+                .customerEmail(claim.getCustomer().getUser().getEmail())
+                .customerPhone(claim.getCustomer().getPhone())
                 .policyNumber(claim.getPolicy().getPolicyNumber())
                 .vehicleRegistration(claim.getPolicy().getVehicle().getRegistrationNumber())
                 .createdAt(claim.getCreatedAt())
